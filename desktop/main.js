@@ -4,7 +4,7 @@ const http = require("http");
 const fs = require("fs");
 const path = require("path");
 
-const SERVER_PORT = Number(process.env.PORT || 8787);
+const SERVER_PORT = Number(process.env.PORT || 8790);
 const SERVER_HOST = "127.0.0.1";
 const HEALTH_PATH = "/api/health";
 const STARTUP_TIMEOUT_MS = 60_000;

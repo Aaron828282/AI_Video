@@ -36,7 +36,7 @@ const {
 } = require("./analysis");
 
 const app = express();
-const PORT = Number(process.env.PORT || 8787);
+const PORT = Number(process.env.PORT || 8790);
 const configuredDataDir = String(process.env.DATA_DIR || "").trim();
 const DATA_DIR = configuredDataDir ? path.resolve(configuredDataDir) : path.join(__dirname, "..", "data");
 const WEB_DIST_DIR = path.join(__dirname, "..", "..", "web", "dist");
@@ -59,6 +59,7 @@ const KB_CATEGORY_MAX_CONTENT_LENGTH = Number.isFinite(Number(process.env.KB_CAT
 const ANALYSIS_IMAGE_DIR = path.join(DATA_DIR, "analysis-images");
 const KB_IMAGE_DIR = path.join(DATA_DIR, "knowledge-base-images");
 const MANUAL_PRODUCT_IMAGE_DIR = path.join(DATA_DIR, "manual-product-images");
+const DOWNLOADS_DIR = path.join(__dirname, "..", "..", "downloads");
 const STATIC_PUBLIC_DIRS = new Set(["analysis-images", "knowledge-base-images", "manual-product-images"]);
 const SECOND_PROMPT_TEMPLATE_FILE = path.join(__dirname, "templates", "prompt-template-v2.1.md");
 const VIDEO_PROMPT_SPEC_FILE = path.join(__dirname, "templates", "ai-video-generation-v2.1.md");
@@ -88,33 +89,40 @@ const RESET_EMAIL_SMTP_AUTO_FALLBACK = String(process.env.RESET_EMAIL_SMTP_AUTO_
   .toLowerCase() !== "false";
 const rawResetEmailSmtpFamily = Number(process.env.RESET_EMAIL_SMTP_FAMILY || 0);
 const RESET_EMAIL_SMTP_FAMILY = rawResetEmailSmtpFamily === 4 || rawResetEmailSmtpFamily === 6 ? rawResetEmailSmtpFamily : 0;
-const DEFAULT_FIRST_PASS_API_KEY = String(
-  process.env.FIRST_PASS_ANALYSIS_API_KEY ||
+const FIXED_CHAT_COMPLETIONS_API_URL = "https://api.vectorengine.ai/v1/chat/completions";
+const FIXED_SHORT_VIDEO_CREATE_API_URL = "https://api.vectorengine.ai/v1/video/create";
+const FIXED_SHORT_VIDEO_QUERY_API_URL = "https://api.vectorengine.ai/v1/video/query";
+const FIXED_FIRST_PASS_MODEL = "gemini-2.5-flash-lite-thinking";
+const FIXED_PROMPT_PACK_MODEL = "gemini-3-flash-preview";
+const FIXED_SHORT_VIDEO_PROMPT_MODEL = "gpt-5.3-codex-low";
+const FIXED_SHORT_VIDEO_RENDER_MODEL = "veo_3_1-fast-4K";
+const FIXED_SHORT_VIDEO_BASE_API_URL = "https://api.vectorengine.ai";
+const DEFAULT_UNIFIED_API_KEY = String(
+  process.env.UNIFIED_API_KEY ||
+    process.env.FIRST_PASS_ANALYSIS_API_KEY ||
+    process.env.SECOND_STAGE_PROMPT_API_KEY ||
+    process.env.SHORT_VIDEO_PROMPT_API_KEY ||
+    process.env.SHORT_VIDEO_RENDER_API_KEY ||
+    process.env.SHORT_VIDEO_API_KEY ||
     process.env.VECTORENGINE_API_KEY ||
+    process.env.VECTORENGINE_SECOND_STAGE_API_KEY ||
+    process.env.COZE_API_TOKEN ||
+    process.env.COZE_AUTH_TOKEN ||
+    process.env.VEO_API_KEY ||
     process.env.GEMINI_FLASH_LITE_THINKING_API_KEY ||
     process.env.GEMINI_API_KEY ||
     ""
 ).trim();
-const DEFAULT_PROMPT_PACK_API_KEY = String(
-  process.env.SECOND_STAGE_PROMPT_API_KEY ||
-    process.env.VECTORENGINE_SECOND_STAGE_API_KEY ||
-    process.env.VECTORENGINE_API_KEY ||
-    process.env.GEMINI_FLASH_LITE_THINKING_API_KEY ||
-    process.env.GEMINI_API_KEY ||
-    DEFAULT_FIRST_PASS_API_KEY
-).trim();
+const DEFAULT_FIRST_PASS_API_KEY = DEFAULT_UNIFIED_API_KEY;
+const DEFAULT_PROMPT_PACK_API_KEY = DEFAULT_UNIFIED_API_KEY;
 const DEFAULT_COZE_WORKFLOW_API_URL = String(process.env.COZE_WORKFLOW_API_URL || "https://rqmnzsj4gn.coze.site/run").trim();
-const DEFAULT_SHORT_VIDEO_API_KEY = String(process.env.SHORT_VIDEO_API_KEY || process.env.COZE_API_TOKEN || process.env.COZE_AUTH_TOKEN || "").trim();
-const DEFAULT_SHORT_VIDEO_PROMPT_API_KEY = String(
-  process.env.SHORT_VIDEO_PROMPT_API_KEY || process.env.SECOND_STAGE_PROMPT_API_KEY || DEFAULT_PROMPT_PACK_API_KEY || DEFAULT_SHORT_VIDEO_API_KEY
-).trim();
-const DEFAULT_SHORT_VIDEO_RENDER_API_KEY = String(
-  process.env.SHORT_VIDEO_RENDER_API_KEY || process.env.SHORT_VIDEO_API_KEY || process.env.COZE_API_TOKEN || process.env.COZE_AUTH_TOKEN || ""
-).trim();
+const DEFAULT_SHORT_VIDEO_API_KEY = DEFAULT_UNIFIED_API_KEY;
+const DEFAULT_SHORT_VIDEO_PROMPT_API_KEY = DEFAULT_UNIFIED_API_KEY;
+const DEFAULT_SHORT_VIDEO_RENDER_API_KEY = DEFAULT_UNIFIED_API_KEY;
 const COZE_REQUEST_TIMEOUT_MS = Number.isFinite(Number(process.env.COZE_REQUEST_TIMEOUT_MS))
   ? Math.max(30000, Math.min(900000, Math.floor(Number(process.env.COZE_REQUEST_TIMEOUT_MS))))
   : 420000;
-const SHORT_VIDEO_PROMPT_API_URL = String(process.env.SHORT_VIDEO_PROMPT_API_URL || "https://api.vectorengine.ai/v1/chat/completions").trim();
+const SHORT_VIDEO_PROMPT_API_URL = FIXED_CHAT_COMPLETIONS_API_URL;
 const SHORT_VIDEO_PROMPT_TIMEOUT_MS = 30 * 60 * 1000;
 const SHORT_VIDEO_PROMPT_MAX_TOKENS = Number.isFinite(Number(process.env.SHORT_VIDEO_PROMPT_MAX_TOKENS))
   ? Math.max(1200, Math.min(12000, Math.floor(Number(process.env.SHORT_VIDEO_PROMPT_MAX_TOKENS))))
@@ -122,8 +130,8 @@ const SHORT_VIDEO_PROMPT_MAX_TOKENS = Number.isFinite(Number(process.env.SHORT_V
 const SHORT_VIDEO_PROMPT_TEMPERATURE = Number.isFinite(Number(process.env.SHORT_VIDEO_PROMPT_TEMPERATURE))
   ? Math.max(0, Math.min(1.2, Number(process.env.SHORT_VIDEO_PROMPT_TEMPERATURE)))
   : 0.2;
-const SHORT_VIDEO_CREATE_API_URL = String(process.env.SHORT_VIDEO_CREATE_API_URL || "https://api.vectorengine.ai/v1/video/create").trim();
-const SHORT_VIDEO_QUERY_API_URL = String(process.env.SHORT_VIDEO_QUERY_API_URL || "https://api.vectorengine.ai/v1/video/query").trim();
+const SHORT_VIDEO_CREATE_API_URL = FIXED_SHORT_VIDEO_CREATE_API_URL;
+const SHORT_VIDEO_QUERY_API_URL = FIXED_SHORT_VIDEO_QUERY_API_URL;
 const SHORT_VIDEO_CREATE_TIMEOUT_MS = Number.isFinite(Number(process.env.SHORT_VIDEO_CREATE_TIMEOUT_MS))
   ? Math.max(15000, Math.min(300000, Math.floor(Number(process.env.SHORT_VIDEO_CREATE_TIMEOUT_MS))))
   : 60000;
@@ -140,20 +148,16 @@ const DEFAULT_VEO_API_BASE_URL = String(process.env.VEO_API_BASE_URL || "https:/
 const DEFAULT_VEO_API_KEY = String(process.env.VEO_API_KEY || "").trim();
 const VEO_CREATE_VIDEO_PATH = "/v1/video/veo";
 const VEO_GET_RESULT_PATH = "/v1/draw/result";
-const VEO_DEFAULT_MODEL = String(process.env.VEO_DEFAULT_MODEL || "veo3.1-fast").trim();
-const DEFAULT_FIRST_PASS_MODEL = String(process.env.FIRST_PASS_ANALYSIS_MODEL || "").trim();
-const DEFAULT_PROMPT_PACK_MODEL = String(process.env.SECOND_STAGE_PROMPT_MODEL || "").trim();
-const DEFAULT_SHORT_VIDEO_PROMPT_MODEL = String(process.env.SHORT_VIDEO_PROMPT_MODEL || "").trim();
-const DEFAULT_SHORT_VIDEO_RENDER_MODEL = String(process.env.SHORT_VIDEO_RENDER_MODEL || process.env.VEO_DEFAULT_MODEL || "veo3.1-fast").trim();
+const VEO_DEFAULT_MODEL = FIXED_SHORT_VIDEO_RENDER_MODEL;
+const DEFAULT_FIRST_PASS_MODEL = FIXED_FIRST_PASS_MODEL;
+const DEFAULT_PROMPT_PACK_MODEL = FIXED_PROMPT_PACK_MODEL;
+const DEFAULT_SHORT_VIDEO_PROMPT_MODEL = FIXED_SHORT_VIDEO_PROMPT_MODEL;
+const DEFAULT_SHORT_VIDEO_RENDER_MODEL = FIXED_SHORT_VIDEO_RENDER_MODEL;
 const SHORT_VIDEO_CREATE_PATH_SUFFIX = "/v1/video/create";
 const SHORT_VIDEO_QUERY_PATH_SUFFIX = "/v1/video/query";
-const DEFAULT_SHORT_VIDEO_BASE_API_URL = String(process.env.SHORT_VIDEO_BASE_API_URL || "").trim();
-const DEFAULT_FIRST_PASS_ANALYSIS_API_URL = String(
-  process.env.FIRST_PASS_ANALYSIS_API_URL || process.env.VECTORENGINE_FIRST_PASS_API_URL || ""
-).trim();
-const DEFAULT_SECOND_STAGE_PROMPT_API_URL = String(
-  process.env.SECOND_STAGE_PROMPT_API_URL || process.env.VECTORENGINE_SECOND_STAGE_API_URL || ""
-).trim();
+const DEFAULT_SHORT_VIDEO_BASE_API_URL = FIXED_SHORT_VIDEO_BASE_API_URL;
+const DEFAULT_FIRST_PASS_ANALYSIS_API_URL = FIXED_CHAT_COMPLETIONS_API_URL;
+const DEFAULT_SECOND_STAGE_PROMPT_API_URL = FIXED_CHAT_COMPLETIONS_API_URL;
 const VEO_DEFAULT_ASPECT_RATIO = String(process.env.VEO_DEFAULT_ASPECT_RATIO || "9:16").trim();
 const VEO_CREATE_TIMEOUT_MS = Number.isFinite(Number(process.env.VEO_CREATE_TIMEOUT_MS ?? process.env.VEO_REQUEST_TIMEOUT_MS))
   ? Math.max(15000, Math.min(300000, Math.floor(Number(process.env.VEO_CREATE_TIMEOUT_MS ?? process.env.VEO_REQUEST_TIMEOUT_MS))))
@@ -194,7 +198,7 @@ const DETAIL_PROMPT_ASPECT_RATIOS = new Set(["1:1", "9:16"]);
 const DEFAULT_PROMPT_PACK_TARGET_MARKET = "United States";
 const DEFAULT_PROMPT_PACK_PROMPT_LANGUAGE = String(process.env.PROMPT_PACK_PROMPT_LANGUAGE || "English").trim() || "English";
 const DEFAULT_PROMPT_PACK_IN_IMAGE_TEXT_LANGUAGE = "English";
-const SHORT_VIDEO_PROMPT_DEFAULT_MODEL = "gemini-2.5-flash-lite-thinking";
+const SHORT_VIDEO_PROMPT_DEFAULT_MODEL = FIXED_SHORT_VIDEO_PROMPT_MODEL;
 const SHORT_VIDEO_PROMPT_BASE_OPENING = [
   "你是一名资深短视频脚本与提示词专家。",
   "任务目标：基于图词请求阶段产出的产品细节信息（外观/材质/形状/尺寸）、第一次分析结果和《AI视频生成规范》文档，生成可直接执行的 JSON。",
@@ -229,6 +233,7 @@ app.use(express.json({ limit: "40mb" }));
 app.use("/static/analysis-images", express.static(ANALYSIS_IMAGE_DIR));
 app.use("/static/knowledge-base-images", express.static(KB_IMAGE_DIR));
 app.use("/static/manual-product-images", express.static(MANUAL_PRODUCT_IMAGE_DIR));
+app.use("/downloads", express.static(DOWNLOADS_DIR));
 
 const analysisQueue = [];
 let analysisWorkersRunning = 0;
@@ -285,66 +290,51 @@ function generateNumericCode(length = 16) {
 
 function sanitizeApiKeysPayload(input, fallback = runtimeApiKeys) {
   const source = normalizeObject(input);
-  const nextFirstPassApiKey = String(
-    source.firstPassApiKey ??
-      source.first_request_api_key ??
-      source.FIRST_PASS_ANALYSIS_API_KEY ??
-      source.VECTORENGINE_API_KEY ??
-      source.GEMINI_FLASH_LITE_THINKING_API_KEY ??
-      source.GEMINI_API_KEY ??
-      source.claudeAuthToken ??
-      source.CLAUDE_AUTH_TOKEN ??
-      fallback.firstPassApiKey ??
-      ""
-  ).trim();
-  const nextPromptPackApiKey = String(
-    source.promptPackApiKey ??
-      source.prompt_pack_api_key ??
-      source.SECOND_STAGE_PROMPT_API_KEY ??
-      source.VECTORENGINE_SECOND_STAGE_API_KEY ??
-      source.secondStagePromptApiKey ??
-      source.secondPromptApiKey ??
-      fallback.promptPackApiKey ??
-      nextFirstPassApiKey
-  ).trim();
-  const nextShortVideoPromptApiKey = String(
-    source.shortVideoPromptApiKey ??
-      source.short_video_prompt_api_key ??
-      source.SHORT_VIDEO_PROMPT_API_KEY ??
-      source.videoPromptApiKey ??
-      source.shortVideoApiKey ??
-      source.short_video_api_key ??
-      source.SHORT_VIDEO_API_KEY ??
-      source.COZE_API_TOKEN ??
-      source.COZE_AUTH_TOKEN ??
-      fallback.shortVideoPromptApiKey ??
-      fallback.promptPackApiKey ??
-      nextPromptPackApiKey
-  ).trim();
-  const nextShortVideoRenderApiKey = String(
-    source.shortVideoRenderApiKey ??
-      source.short_video_render_api_key ??
-      source.SHORT_VIDEO_RENDER_API_KEY ??
-      source.videoRenderApiKey ??
-      source.shortVideoApiKey ??
-      source.short_video_api_key ??
-      source.SHORT_VIDEO_API_KEY ??
-      source.COZE_API_TOKEN ??
-      source.COZE_AUTH_TOKEN ??
-      source.cozeApiToken ??
-      source.veoApiKey ??
-      source.VEO_API_KEY ??
-      fallback.shortVideoRenderApiKey ??
-      fallback.shortVideoApiKey ??
-      ""
-  ).trim();
-  const nextShortVideoApiKey = nextShortVideoRenderApiKey || nextShortVideoPromptApiKey;
+  const fallbackSource = normalizeObject(fallback);
+  const candidateValues = [
+    source.unifiedApiKey,
+    source.apiKey,
+    source.firstPassApiKey,
+    source.first_request_api_key,
+    source.FIRST_PASS_ANALYSIS_API_KEY,
+    source.VECTORENGINE_API_KEY,
+    source.promptPackApiKey,
+    source.prompt_pack_api_key,
+    source.SECOND_STAGE_PROMPT_API_KEY,
+    source.VECTORENGINE_SECOND_STAGE_API_KEY,
+    source.shortVideoPromptApiKey,
+    source.short_video_prompt_api_key,
+    source.SHORT_VIDEO_PROMPT_API_KEY,
+    source.shortVideoRenderApiKey,
+    source.short_video_render_api_key,
+    source.SHORT_VIDEO_RENDER_API_KEY,
+    source.shortVideoApiKey,
+    source.short_video_api_key,
+    source.SHORT_VIDEO_API_KEY,
+    source.COZE_API_TOKEN,
+    source.COZE_AUTH_TOKEN,
+    source.cozeApiToken,
+    source.veoApiKey,
+    source.VEO_API_KEY,
+    source.claudeAuthToken,
+    source.CLAUDE_AUTH_TOKEN,
+    source.GEMINI_FLASH_LITE_THINKING_API_KEY,
+    source.GEMINI_API_KEY,
+    fallbackSource.firstPassApiKey,
+    fallbackSource.promptPackApiKey,
+    fallbackSource.shortVideoPromptApiKey,
+    fallbackSource.shortVideoRenderApiKey,
+    fallbackSource.shortVideoApiKey
+  ];
+  const unifiedApiKey = candidateValues
+    .map((value) => String(value ?? "").trim())
+    .find(Boolean) || "";
   return {
-    firstPassApiKey: nextFirstPassApiKey,
-    promptPackApiKey: nextPromptPackApiKey,
-    shortVideoApiKey: nextShortVideoApiKey,
-    shortVideoPromptApiKey: nextShortVideoPromptApiKey,
-    shortVideoRenderApiKey: nextShortVideoRenderApiKey || nextShortVideoApiKey
+    firstPassApiKey: unifiedApiKey,
+    promptPackApiKey: unifiedApiKey,
+    shortVideoApiKey: unifiedApiKey,
+    shortVideoPromptApiKey: unifiedApiKey,
+    shortVideoRenderApiKey: unifiedApiKey
   };
 }
 
@@ -384,131 +374,26 @@ function buildShortVideoEndpointByBase(baseUrl, suffix) {
 }
 
 function sanitizeApiEndpointsPayload(input, fallback = runtimeApiEndpoints) {
-  const source = normalizeObject(input);
-  const firstPassAnalysisApiUrl = String(
-    source.firstPassAnalysisApiUrl ??
-      source.first_pass_analysis_api_url ??
-      source.FIRST_PASS_ANALYSIS_API_URL ??
-      source.firstPassApiUrl ??
-      source.analysisApiUrl ??
-      source.vectorengineFirstPassApiUrl ??
-      source.VECTORENGINE_FIRST_PASS_API_URL ??
-      fallback.firstPassAnalysisApiUrl ??
-      DEFAULT_FIRST_PASS_ANALYSIS_API_URL
-  ).trim();
-  const secondStagePromptApiUrlRaw = String(
-    source.secondStagePromptApiUrl ??
-      source.second_stage_prompt_api_url ??
-      source.SECOND_STAGE_PROMPT_API_URL ??
-      source.promptPackApiUrl ??
-      source.promptApiUrl ??
-      source.vectorengineSecondStageApiUrl ??
-      source.VECTORENGINE_SECOND_STAGE_API_URL ??
-      fallback.secondStagePromptApiUrl ??
-      DEFAULT_SECOND_STAGE_PROMPT_API_URL
-  ).trim();
-  const secondStagePromptApiUrl = secondStagePromptApiUrlRaw || firstPassAnalysisApiUrl;
-  const incomingBaseApiUrl =
-    source.shortVideoBaseApiUrl ??
-    source.short_video_base_api_url ??
-    source.SHORT_VIDEO_BASE_API_URL ??
-    source.baseApiUrl ??
-    source.videoBaseApiUrl ??
-    source.veoApiBaseUrl ??
-    source.VEO_API_BASE_URL;
-  const explicitBaseUrl = trimTrailingSlash(incomingBaseApiUrl);
-  const promptApiUrl = String(
-    source.shortVideoPromptApiUrl ??
-      source.short_video_prompt_api_url ??
-      source.SHORT_VIDEO_PROMPT_API_URL ??
-      source.videoPromptApiUrl ??
-      fallback.shortVideoPromptApiUrl ??
-      SHORT_VIDEO_PROMPT_API_URL
-  ).trim();
-  const incomingCreateApiUrl =
-    source.shortVideoCreateApiUrl ??
-    source.short_video_create_api_url ??
-    source.SHORT_VIDEO_CREATE_API_URL ??
-    source.videoCreateApiUrl;
-  const incomingQueryApiUrl =
-    source.shortVideoQueryApiUrl ??
-    source.short_video_query_api_url ??
-    source.SHORT_VIDEO_QUERY_API_URL ??
-    source.videoQueryApiUrl;
-  const hasIncomingCreateApiUrl = safeText(incomingCreateApiUrl);
-  const hasIncomingQueryApiUrl = safeText(incomingQueryApiUrl);
-  const createApiUrlRaw = String(incomingCreateApiUrl ?? fallback.shortVideoCreateApiUrl ?? SHORT_VIDEO_CREATE_API_URL).trim();
-  const queryApiUrlRaw = String(incomingQueryApiUrl ?? fallback.shortVideoQueryApiUrl ?? SHORT_VIDEO_QUERY_API_URL).trim();
-  const fallbackBaseUrl = trimTrailingSlash(fallback.shortVideoBaseApiUrl ?? "");
-  let resolvedBaseUrl = "";
-  let createApiUrl = createApiUrlRaw;
-  let queryApiUrl = queryApiUrlRaw;
-  if (explicitBaseUrl) {
-    resolvedBaseUrl = explicitBaseUrl;
-    createApiUrl = buildShortVideoEndpointByBase(resolvedBaseUrl, SHORT_VIDEO_CREATE_PATH_SUFFIX);
-    queryApiUrl = buildShortVideoEndpointByBase(resolvedBaseUrl, SHORT_VIDEO_QUERY_PATH_SUFFIX);
-  } else if (!hasIncomingCreateApiUrl && !hasIncomingQueryApiUrl && fallbackBaseUrl) {
-    resolvedBaseUrl = fallbackBaseUrl;
-    createApiUrl = buildShortVideoEndpointByBase(resolvedBaseUrl, SHORT_VIDEO_CREATE_PATH_SUFFIX);
-    queryApiUrl = buildShortVideoEndpointByBase(resolvedBaseUrl, SHORT_VIDEO_QUERY_PATH_SUFFIX);
-  } else {
-    resolvedBaseUrl = inferShortVideoBaseApiUrl(createApiUrlRaw, queryApiUrlRaw);
-  }
+  void input;
+  void fallback;
   return {
-    firstPassAnalysisApiUrl,
-    secondStagePromptApiUrl,
-    shortVideoPromptApiUrl: promptApiUrl,
-    shortVideoBaseApiUrl: resolvedBaseUrl || inferShortVideoBaseApiUrl(createApiUrl, queryApiUrl),
-    shortVideoCreateApiUrl: createApiUrl,
-    shortVideoQueryApiUrl: queryApiUrl
+    firstPassAnalysisApiUrl: DEFAULT_FIRST_PASS_ANALYSIS_API_URL,
+    secondStagePromptApiUrl: DEFAULT_SECOND_STAGE_PROMPT_API_URL,
+    shortVideoPromptApiUrl: SHORT_VIDEO_PROMPT_API_URL,
+    shortVideoBaseApiUrl: DEFAULT_SHORT_VIDEO_BASE_API_URL,
+    shortVideoCreateApiUrl: SHORT_VIDEO_CREATE_API_URL,
+    shortVideoQueryApiUrl: SHORT_VIDEO_QUERY_API_URL
   };
 }
 
 function sanitizeRequestModelsPayload(input, fallback = runtimeRequestModels) {
-  const source = normalizeObject(input);
+  void input;
+  void fallback;
   return {
-    firstPassModel: String(
-      source.firstPassModel ??
-        source.first_pass_model ??
-        source.FIRST_PASS_ANALYSIS_MODEL ??
-        source.analysisModel ??
-        source.firstRequestModel ??
-        fallback.firstPassModel ??
-        ""
-    ).trim(),
-    promptPackModel: String(
-      source.promptPackModel ??
-        source.prompt_pack_model ??
-        source.SECOND_STAGE_PROMPT_MODEL ??
-        source.secondPromptModel ??
-        source.promptModel ??
-        fallback.promptPackModel ??
-        ""
-    ).trim(),
-    shortVideoPromptModel: String(
-      source.shortVideoPromptModel ??
-        source.short_video_prompt_model ??
-        source.SHORT_VIDEO_PROMPT_MODEL ??
-        source.videoPromptModel ??
-        source.shortVideoPromptModelName ??
-        fallback.shortVideoPromptModel ??
-        source.promptPackModel ??
-        source.SECOND_STAGE_PROMPT_MODEL ??
-        fallback.promptPackModel ??
-        ""
-    ).trim(),
-    shortVideoRenderModel: String(
-      source.shortVideoRenderModel ??
-        source.short_video_render_model ??
-        source.SHORT_VIDEO_RENDER_MODEL ??
-        source.shortVideoModel ??
-        source.short_video_model ??
-        source.VEO_DEFAULT_MODEL ??
-        source.videoModel ??
-        source.veoModel ??
-        fallback.shortVideoRenderModel ??
-        ""
-    ).trim()
+    firstPassModel: DEFAULT_FIRST_PASS_MODEL,
+    promptPackModel: DEFAULT_PROMPT_PACK_MODEL,
+    shortVideoPromptModel: DEFAULT_SHORT_VIDEO_PROMPT_MODEL,
+    shortVideoRenderModel: DEFAULT_SHORT_VIDEO_RENDER_MODEL
   };
 }
 

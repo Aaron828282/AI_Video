@@ -14,10 +14,13 @@ import type {
   VideoScriptGenerationState
 } from "./types";
 import { ApiKeyManagerSection } from "./components/ApiKeyManagerSection";
+import { UsageGuideSection } from "./components/UsageGuideSection";
 
 const API_BASE = String(import.meta.env.VITE_API_BASE ?? "")
   .trim()
   .replace(/\/+$/, "");
+const EXTENSION_DOWNLOAD_PATH = "/downloads/ai-auto-1688-extension.zip";
+const EXTENSION_DOWNLOAD_URL = API_BASE ? `${API_BASE}${EXTENSION_DOWNLOAD_PATH}` : EXTENSION_DOWNLOAD_PATH;
 const GENSPARK_IMAGE_URL = "https://www.genspark.ai/ai_image";
 const MAIN_IMAGE_OPENING =
   "你是一名电商商品生图助手。请基于以下【主图提示词】逐条生成1:1主图。要求：保持同一商品主体、材质、结构和比例一致；不要新增原图不存在的文字/Logo；画面应适配目标市场电商平台。若提示词与参考图中的产品外观存在差别，必须优先以参考图外观为准进行绘制，并严格保持产品主体一致性。";
@@ -3473,7 +3476,7 @@ export default function App() {
   const [videoScriptLocaleOverrides, setVideoScriptLocaleOverrides] = useState<Record<string, PromptPackLocaleSettings>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [activeSection, setActiveSection] = useState<"library" | "aiResults" | "apiKeys">("library");
+  const [activeSection, setActiveSection] = useState<"library" | "aiResults" | "apiKeys" | "usageGuide">("library");
   const [view, setView] = useState<"grid" | "list">("grid");
   const [sortBy, setSortBy] = useState<"capturedAt" | "priceMin">("capturedAt");
   const [order, setOrder] = useState<"desc" | "asc">("desc");
@@ -3798,6 +3801,12 @@ export default function App() {
       return {
         title: "AI分析结果",
         subtitle: `共 ${analyzedCount} 条分析记录`
+      };
+    }
+    if (activeSection === "usageGuide") {
+      return {
+        title: "使用文档",
+        subtitle: "了解网站功能与标准使用流程，帮助新用户快速上手"
       };
     }
     return {
@@ -4246,6 +4255,16 @@ export default function App() {
             >
               API Key管理
             </button>
+            <button
+              className={`menu-item menu-item-btn ${activeSection === "usageGuide" ? "active" : ""}`}
+              onClick={() => setActiveSection("usageGuide")}
+              type="button"
+            >
+              使用文档
+            </button>
+            <a className="menu-item menu-item-btn" href={EXTENSION_DOWNLOAD_URL} rel="noreferrer" target="_blank">
+              下载插件
+            </a>
             <a className="menu-item disabled">
               数据分析 <span>即将上线</span>
             </a>
@@ -4482,6 +4501,8 @@ export default function App() {
                 />
               ) : null}
             </>
+          ) : activeSection === "usageGuide" ? (
+            <UsageGuideSection extensionDownloadUrl={EXTENSION_DOWNLOAD_URL} />
           ) : (
             <ApiKeyManagerSection apiBase={API_BASE} sessionStorageKey={API_KEY_MANAGER_SESSION_STORAGE_KEY} />
           )}

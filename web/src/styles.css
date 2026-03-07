@@ -620,6 +620,67 @@ body {
   gap: 12px;
 }
 
+.usage-guide-page {
+  margin-top: 12px;
+  display: grid;
+  gap: 12px;
+}
+
+.usage-guide-intro,
+.usage-guide-card {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #fff;
+  padding: 14px;
+}
+
+.usage-guide-intro h3,
+.usage-guide-card h4 {
+  margin: 0;
+}
+
+.usage-guide-intro p,
+.usage-guide-card p {
+  margin: 8px 0 0;
+  color: var(--muted);
+  line-height: 1.55;
+  font-size: 13px;
+}
+
+.usage-guide-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.usage-guide-card ul,
+.usage-guide-card ol {
+  margin: 10px 0 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 6px;
+  color: #2a4165;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.usage-guide-card li {
+  word-break: break-word;
+}
+
+.usage-guide-download-actions {
+  margin-top: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.usage-guide-download-link {
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+}
+
 .apikey-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2825,6 +2886,10 @@ body {
 @media (max-width: 860px) {
   .grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .usage-guide-grid {
+    grid-template-columns: 1fr;
   }
 
   .apikey-grid {

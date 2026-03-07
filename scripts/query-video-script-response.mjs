@@ -5,7 +5,7 @@
  *
  * Usage:
  *   node scripts/query-video-script-response.mjs --recordId <id>
- *   node scripts/query-video-script-response.mjs --recordId <id> --baseUrl http://localhost:8787
+ *   node scripts/query-video-script-response.mjs --recordId <id> --baseUrl http://localhost:8790
  *   node scripts/query-video-script-response.mjs --recordId <id> --save ./video-script-debug.json
  */
 
@@ -25,7 +25,7 @@ function usage() {
 }
 
 const recordId = getArg("--recordId");
-const baseUrl = getArg("--baseUrl") || process.env.API_BASE || "http://localhost:8787";
+const baseUrl = getArg("--baseUrl") || process.env.API_BASE || "http://localhost:8790";
 const savePath = getArg("--save");
 
 if (!recordId) {
@@ -83,4 +83,3 @@ main().catch((error) => {
   console.error("Unexpected error:", error instanceof Error ? error.message : String(error));
   process.exit(99);
 });
-

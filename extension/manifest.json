@@ -11,7 +11,9 @@
   ],
   "host_permissions": [
     "*://*.1688.com/*",
-    "http://localhost:8787/*",
+    "http://localhost:8790/*",
+    "https://*.up.railway.app/*",
+    "https://ai-auto-1688-server-production.up.railway.app/*",
     "http://*/api/*",
     "https://*/api/*"
   ],

@@ -17,7 +17,7 @@ const CLAUDE_API_PATH = "/v1/messages";
 const VECTORENGINE_DEFAULT_BASE_URL = "https://api.vectorengine.ai";
 const VECTORENGINE_CHAT_API_PATH = "/v1/chat/completions";
 const FIRST_PASS_GEMINI_MODEL = "gemini-2.5-flash-lite-thinking";
-const SECOND_STAGE_PROMPT_GEMINI_MODEL = "gemini-2.5-flash-lite-thinking";
+const SECOND_STAGE_PROMPT_GEMINI_MODEL = "gemini-3-flash-preview";
 const SECOND_STAGE_SYSTEM_PROMPT =
   "You are a strict e-commerce prompt generator. Output valid JSON only and follow the output contract exactly. Non-negotiable count rule: main_images must be 9 and detail_images must be 5.";
 const ANALYSIS_JSON_KEYS = [
@@ -1012,11 +1012,11 @@ function getVectorEngineChatApiUrl() {
 }
 
 function getFirstPassAnalysisApiUrl() {
-  return safeText(process.env.FIRST_PASS_ANALYSIS_API_URL || process.env.VECTORENGINE_FIRST_PASS_API_URL, getVectorEngineChatApiUrl());
+  return getVectorEngineChatApiUrl();
 }
 
 function getSecondStagePromptApiUrl() {
-  return safeText(process.env.SECOND_STAGE_PROMPT_API_URL || process.env.VECTORENGINE_SECOND_STAGE_API_URL, getFirstPassAnalysisApiUrl());
+  return getVectorEngineChatApiUrl();
 }
 
 function getFirstPassAnalysisApiKey() {
@@ -1040,11 +1040,11 @@ function getSecondStagePromptApiKey() {
 }
 
 function getFirstPassAnalysisModel() {
-  return safeText(process.env.FIRST_PASS_ANALYSIS_MODEL, FIRST_PASS_GEMINI_MODEL);
+  return FIRST_PASS_GEMINI_MODEL;
 }
 
 function getSecondStagePromptModel() {
-  return safeText(process.env.SECOND_STAGE_PROMPT_MODEL, SECOND_STAGE_PROMPT_GEMINI_MODEL);
+  return SECOND_STAGE_PROMPT_GEMINI_MODEL;
 }
 
 function getClaudePrimaryApiKey() {

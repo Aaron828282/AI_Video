@@ -1,27 +1,4 @@
-﻿import { useCallback, useEffect, useState } from "react";
-
-type ManagedApiKeys = {
-  firstPassApiKey: string;
-  promptPackApiKey: string;
-  shortVideoPromptApiKey: string;
-  shortVideoRenderApiKey: string;
-};
-
-type ManagedRequestModels = {
-  firstPassModel: string;
-  promptPackModel: string;
-  shortVideoPromptModel: string;
-  shortVideoRenderModel: string;
-};
-
-type ManagedApiEndpoints = {
-  firstPassAnalysisApiUrl: string;
-  secondStagePromptApiUrl: string;
-  shortVideoPromptApiUrl: string;
-  shortVideoBaseApiUrl: string;
-  shortVideoCreateApiUrl: string;
-  shortVideoQueryApiUrl: string;
-};
+import { useCallback, useEffect, useState } from "react";
 
 type ManagerLoginResponse = {
   ok: boolean;
@@ -39,40 +16,9 @@ type ManagerApiKeysResponse = {
   message?: string;
 };
 
-type ManagerResetResponse = {
-  ok: boolean;
-  message?: string;
-  email?: string;
-  expiresAt?: string;
-  verifiedUntil?: string;
-};
-
 type ApiKeyManagerSectionProps = {
   apiBase: string;
   sessionStorageKey: string;
-};
-
-const DEFAULT_MANAGED_API_KEYS: ManagedApiKeys = {
-  firstPassApiKey: "",
-  promptPackApiKey: "",
-  shortVideoPromptApiKey: "",
-  shortVideoRenderApiKey: ""
-};
-
-const DEFAULT_MANAGED_REQUEST_MODELS: ManagedRequestModels = {
-  firstPassModel: "",
-  promptPackModel: "",
-  shortVideoPromptModel: "",
-  shortVideoRenderModel: ""
-};
-
-const DEFAULT_MANAGED_API_ENDPOINTS: ManagedApiEndpoints = {
-  firstPassAnalysisApiUrl: "",
-  secondStagePromptApiUrl: "",
-  shortVideoPromptApiUrl: "",
-  shortVideoBaseApiUrl: "",
-  shortVideoCreateApiUrl: "",
-  shortVideoQueryApiUrl: ""
 };
 
 function safeText(input: unknown) {
@@ -83,18 +29,6 @@ function safeText(input: unknown) {
     return String(input);
   }
   return "";
-}
-
-function trimTrailingSlash(value: string) {
-  return String(value || "").trim().replace(/\/+$/, "");
-}
-
-function buildShortVideoEndpointByBase(baseUrl: string, suffix: string) {
-  const base = trimTrailingSlash(baseUrl);
-  if (!base) {
-    return "";
-  }
-  return `${base}${suffix}`;
 }
 
 function toDate(value: string | null | undefined) {
@@ -108,123 +42,43 @@ function toDate(value: string | null | undefined) {
   return date.toLocaleString("zh-CN", { hour12: false });
 }
 
-function normalizeManagedApiKeys(input: unknown): ManagedApiKeys {
+function normalizeUnifiedApiKey(input: unknown) {
   const source = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
-  const firstPassApiKey = safeText(
-    source.firstPassApiKey ?? source.first_request_api_key ?? source.FIRST_PASS_ANALYSIS_API_KEY ?? source.claudeAuthToken ?? source.CLAUDE_AUTH_TOKEN
-  );
-  const promptPackApiKey = safeText(
-    source.promptPackApiKey ??
-      source.prompt_pack_api_key ??
-      source.SECOND_STAGE_PROMPT_API_KEY ??
-      source.secondStagePromptApiKey ??
-      source.secondPromptApiKey ??
-      source.cozeApiToken ??
-      source.COZE_API_TOKEN
-  );
-  const shortVideoPromptApiKey = safeText(
-    source.shortVideoPromptApiKey ??
-      source.short_video_prompt_api_key ??
-      source.SHORT_VIDEO_PROMPT_API_KEY ??
-      source.videoPromptApiKey ??
-      source.shortVideoApiKey ??
-      source.short_video_api_key ??
-      source.SHORT_VIDEO_API_KEY ??
-      source.cozeApiToken ??
-      source.COZE_API_TOKEN
-  );
-  const shortVideoRenderApiKey = safeText(
-    source.shortVideoRenderApiKey ??
-      source.short_video_render_api_key ??
-      source.SHORT_VIDEO_RENDER_API_KEY ??
-      source.videoRenderApiKey ??
-      source.shortVideoApiKey ??
-      source.short_video_api_key ??
-      source.SHORT_VIDEO_API_KEY ??
-      source.veoApiKey ??
-      source.VEO_API_KEY ??
-      source.cozeApiToken ??
-      source.COZE_API_TOKEN
-  );
-  return {
-    firstPassApiKey,
-    promptPackApiKey: promptPackApiKey || firstPassApiKey,
-    shortVideoPromptApiKey: shortVideoPromptApiKey || promptPackApiKey || firstPassApiKey,
-    shortVideoRenderApiKey: shortVideoRenderApiKey || shortVideoPromptApiKey || promptPackApiKey || firstPassApiKey
-  };
+  const candidates = [
+    source.unifiedApiKey,
+    source.apiKey,
+    source.firstPassApiKey,
+    source.first_request_api_key,
+    source.FIRST_PASS_ANALYSIS_API_KEY,
+    source.promptPackApiKey,
+    source.prompt_pack_api_key,
+    source.SECOND_STAGE_PROMPT_API_KEY,
+    source.shortVideoPromptApiKey,
+    source.short_video_prompt_api_key,
+    source.SHORT_VIDEO_PROMPT_API_KEY,
+    source.shortVideoRenderApiKey,
+    source.short_video_render_api_key,
+    source.SHORT_VIDEO_RENDER_API_KEY,
+    source.shortVideoApiKey,
+    source.short_video_api_key,
+    source.SHORT_VIDEO_API_KEY,
+    source.VECTORENGINE_API_KEY,
+    source.COZE_API_TOKEN,
+    source.COZE_AUTH_TOKEN,
+    source.VEO_API_KEY
+  ];
+  return candidates.map((value) => safeText(value)).find(Boolean) || "";
 }
 
-function normalizeManagedApiEndpoints(input: unknown): ManagedApiEndpoints {
-  const source = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
-  const shortVideoBaseApiUrl = safeText(
-    source.shortVideoBaseApiUrl ??
-      source.short_video_base_api_url ??
-      source.SHORT_VIDEO_BASE_API_URL ??
-      source.baseApiUrl ??
-      source.videoBaseApiUrl ??
-      source.veoApiBaseUrl ??
-      source.VEO_API_BASE_URL
-  );
-  const shortVideoCreateApiUrl = safeText(
-    source.shortVideoCreateApiUrl ??
-      source.short_video_create_api_url ??
-      source.SHORT_VIDEO_CREATE_API_URL ??
-      source.videoCreateApiUrl
-  );
-  const shortVideoQueryApiUrl = safeText(
-    source.shortVideoQueryApiUrl ??
-      source.short_video_query_api_url ??
-      source.SHORT_VIDEO_QUERY_API_URL ??
-      source.videoQueryApiUrl
-  );
+function buildApiKeysPayload(unifiedApiKey: string) {
+  const value = String(unifiedApiKey || "").trim();
   return {
-    firstPassAnalysisApiUrl: safeText(
-      source.firstPassAnalysisApiUrl ??
-        source.first_pass_analysis_api_url ??
-        source.FIRST_PASS_ANALYSIS_API_URL ??
-        source.firstPassApiUrl ??
-        source.analysisApiUrl ??
-        source.vectorengineFirstPassApiUrl ??
-        source.VECTORENGINE_FIRST_PASS_API_URL
-    ),
-    secondStagePromptApiUrl: safeText(
-      source.secondStagePromptApiUrl ??
-        source.second_stage_prompt_api_url ??
-        source.SECOND_STAGE_PROMPT_API_URL ??
-        source.promptPackApiUrl ??
-        source.promptApiUrl ??
-        source.vectorengineSecondStageApiUrl ??
-        source.VECTORENGINE_SECOND_STAGE_API_URL
-    ),
-    shortVideoPromptApiUrl: safeText(
-      source.shortVideoPromptApiUrl ??
-        source.short_video_prompt_api_url ??
-        source.SHORT_VIDEO_PROMPT_API_URL ??
-        source.videoPromptApiUrl
-    ),
-    shortVideoBaseApiUrl,
-    shortVideoCreateApiUrl: shortVideoCreateApiUrl || buildShortVideoEndpointByBase(shortVideoBaseApiUrl, "/v1/video/create"),
-    shortVideoQueryApiUrl: shortVideoQueryApiUrl || buildShortVideoEndpointByBase(shortVideoBaseApiUrl, "/v1/video/query")
-  };
-}
-
-function normalizeManagedRequestModels(input: unknown): ManagedRequestModels {
-  const source = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
-  return {
-    firstPassModel: safeText(source.firstPassModel ?? source.first_pass_model ?? source.FIRST_PASS_ANALYSIS_MODEL ?? source.analysisModel),
-    promptPackModel: safeText(source.promptPackModel ?? source.prompt_pack_model ?? source.SECOND_STAGE_PROMPT_MODEL ?? source.promptModel),
-    shortVideoPromptModel: safeText(
-      source.shortVideoPromptModel ?? source.short_video_prompt_model ?? source.SHORT_VIDEO_PROMPT_MODEL ?? source.videoPromptModel
-    ),
-    shortVideoRenderModel: safeText(
-      source.shortVideoRenderModel ??
-        source.short_video_render_model ??
-        source.SHORT_VIDEO_RENDER_MODEL ??
-        source.shortVideoModel ??
-        source.short_video_model ??
-        source.VEO_DEFAULT_MODEL ??
-        source.videoModel
-    )
+    unifiedApiKey: value,
+    firstPassApiKey: value,
+    promptPackApiKey: value,
+    shortVideoPromptApiKey: value,
+    shortVideoRenderApiKey: value,
+    shortVideoApiKey: value
   };
 }
 
@@ -241,26 +95,15 @@ export function ApiKeyManagerSection({ apiBase, sessionStorageKey }: ApiKeyManag
   const [loginPending, setLoginPending] = useState(false);
   const [savePending, setSavePending] = useState(false);
   const [passwordInput, setPasswordInput] = useState("");
-  const [apiKeys, setApiKeys] = useState<ManagedApiKeys>(DEFAULT_MANAGED_API_KEYS);
-  const [requestModels, setRequestModels] = useState<ManagedRequestModels>(DEFAULT_MANAGED_REQUEST_MODELS);
-  const [apiEndpoints, setApiEndpoints] = useState<ManagedApiEndpoints>(DEFAULT_MANAGED_API_ENDPOINTS);
+  const [unifiedApiKey, setUnifiedApiKey] = useState("");
   const [statusError, setStatusError] = useState("");
   const [statusNotice, setStatusNotice] = useState("");
   const [keyUpdatedAt, setKeyUpdatedAt] = useState<string | null>(null);
 
-  const [resetCodeInput, setResetCodeInput] = useState("");
-  const [newManagerPassword, setNewManagerPassword] = useState("");
-  const [newManagerPasswordConfirm, setNewManagerPasswordConfirm] = useState("");
-  const [resetCodeExpiresAt, setResetCodeExpiresAt] = useState<string | null>(null);
-  const [resetVerifiedUntil, setResetVerifiedUntil] = useState<string | null>(null);
-  const [resetPending, setResetPending] = useState(false);
-
   const clearSession = useCallback(() => {
     setSessionToken("");
     setPasswordInput("");
-    setApiKeys(DEFAULT_MANAGED_API_KEYS);
-    setRequestModels(DEFAULT_MANAGED_REQUEST_MODELS);
-    setApiEndpoints(DEFAULT_MANAGED_API_ENDPOINTS);
+    setUnifiedApiKey("");
     window.sessionStorage.removeItem(sessionStorageKey);
   }, [sessionStorageKey]);
 
@@ -286,9 +129,7 @@ export function ApiKeyManagerSection({ apiBase, sessionStorageKey }: ApiKeyManag
           setStatusError(safeText(json?.message) || `读取 API Key 失败: ${response.status}`);
           return false;
         }
-        setApiKeys(normalizeManagedApiKeys(json.apiKeys));
-        setRequestModels(normalizeManagedRequestModels(json.models));
-        setApiEndpoints(normalizeManagedApiEndpoints(json.apiEndpoints));
+        setUnifiedApiKey(normalizeUnifiedApiKey(json.apiKeys));
         setKeyUpdatedAt(json.updatedAt ?? new Date().toISOString());
         return true;
       } catch (error) {
@@ -373,7 +214,7 @@ export function ApiKeyManagerSection({ apiBase, sessionStorageKey }: ApiKeyManag
       const response = await fetch(`${apiBase}/api/system/api-keys`, {
         method: "PUT",
         headers: managerAuthHeaders(sessionToken),
-        body: JSON.stringify({ apiKeys, models: requestModels, apiEndpoints })
+        body: JSON.stringify({ apiKeys: buildApiKeysPayload(unifiedApiKey) })
       });
       const json = (await response.json()) as ManagerApiKeysResponse;
       if (response.status === 401) {
@@ -385,9 +226,7 @@ export function ApiKeyManagerSection({ apiBase, sessionStorageKey }: ApiKeyManag
         setStatusError(safeText(json?.message) || `保存失败: ${response.status}`);
         return;
       }
-      setApiKeys(normalizeManagedApiKeys(json.apiKeys));
-      setRequestModels(normalizeManagedRequestModels(json.models));
-      setApiEndpoints(normalizeManagedApiEndpoints(json.apiEndpoints));
+      setUnifiedApiKey(normalizeUnifiedApiKey(json.apiKeys));
       setKeyUpdatedAt(json.updatedAt ?? new Date().toISOString());
       setStatusNotice("API Key 已保存并立即生效。");
     } catch (error) {
@@ -395,105 +234,7 @@ export function ApiKeyManagerSection({ apiBase, sessionStorageKey }: ApiKeyManag
     } finally {
       setSavePending(false);
     }
-  }, [apiBase, apiEndpoints, apiKeys, clearSession, requestModels, sessionToken]);
-
-  const handleRequestResetCode = useCallback(async () => {
-    setResetPending(true);
-    setStatusError("");
-    setStatusNotice("");
-    try {
-      const response = await fetch(`${apiBase}/api/system/credentials/password-reset/request`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({})
-      });
-      const json = (await response.json()) as ManagerResetResponse;
-      if (!response.ok || !json.ok) {
-        setStatusError(safeText(json?.message) || `验证码请求失败: ${response.status}`);
-        return;
-      }
-      setResetCodeInput("");
-      setResetCodeExpiresAt(json.expiresAt ?? null);
-      setResetVerifiedUntil(null);
-      setStatusNotice("16 位验证码已发送到指定邮箱，请在 5 分钟内完成校验。");
-    } catch (error) {
-      setStatusError(error instanceof Error ? error.message : "验证码请求失败");
-    } finally {
-      setResetPending(false);
-    }
-  }, [apiBase]);
-
-  const handleVerifyResetCode = useCallback(async () => {
-    const code = safeText(resetCodeInput);
-    if (!/^\d{16}$/.test(code)) {
-      setStatusError("请输入 16 位数字验证码。");
-      return;
-    }
-    setResetPending(true);
-    setStatusError("");
-    setStatusNotice("");
-    try {
-      const response = await fetch(`${apiBase}/api/system/credentials/password-reset/verify`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code })
-      });
-      const json = (await response.json()) as ManagerResetResponse;
-      if (!response.ok || !json.ok) {
-        setStatusError(safeText(json?.message) || `验证码校验失败: ${response.status}`);
-        return;
-      }
-      setResetVerifiedUntil(json.verifiedUntil ?? null);
-      setStatusNotice("验证码校验通过，请输入新密码并提交修改。");
-    } catch (error) {
-      setStatusError(error instanceof Error ? error.message : "验证码校验失败");
-    } finally {
-      setResetPending(false);
-    }
-  }, [apiBase, resetCodeInput]);
-
-  const handleUpdateManagerPassword = useCallback(async () => {
-    if (!resetVerifiedUntil) {
-      setStatusError("请先完成验证码校验，再修改密码。");
-      return;
-    }
-    const nextPassword = String(newManagerPassword || "");
-    const confirmPassword = String(newManagerPasswordConfirm || "");
-    if (!nextPassword || nextPassword.length < 8) {
-      setStatusError("新密码至少 8 位。");
-      return;
-    }
-    if (nextPassword !== confirmPassword) {
-      setStatusError("两次输入的新密码不一致。");
-      return;
-    }
-    setResetPending(true);
-    setStatusError("");
-    setStatusNotice("");
-    try {
-      const response = await fetch(`${apiBase}/api/system/credentials/password/update`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ newPassword: nextPassword })
-      });
-      const json = (await response.json()) as ManagerResetResponse;
-      if (!response.ok || !json.ok) {
-        setStatusError(safeText(json?.message) || `密码修改失败: ${response.status}`);
-        return;
-      }
-      clearSession();
-      setResetCodeInput("");
-      setResetCodeExpiresAt(null);
-      setResetVerifiedUntil(null);
-      setNewManagerPassword("");
-      setNewManagerPasswordConfirm("");
-      setStatusNotice("密码修改成功，请使用新密码重新进入管理页。");
-    } catch (error) {
-      setStatusError(error instanceof Error ? error.message : "密码修改失败");
-    } finally {
-      setResetPending(false);
-    }
-  }, [apiBase, clearSession, newManagerPassword, newManagerPasswordConfirm, resetVerifiedUntil]);
+  }, [apiBase, clearSession, sessionToken, unifiedApiKey]);
 
   return (
     <section className="apikey-page">
@@ -503,7 +244,7 @@ export function ApiKeyManagerSection({ apiBase, sessionStorageKey }: ApiKeyManag
       <div className="apikey-grid">
         <article className="apikey-card">
           <h3>API Key 管理</h3>
-          <p>请输入管理密码进入页面。保存后可按请求粒度配置 API Key、模型和请求地址。</p>
+          <p>请输入管理密码进入页面。页面仅保留一个 API Key，所有模型请求与视频请求共用此 Key。</p>
           {!sessionToken ? (
             <div className="apikey-form">
               <label className="apikey-field">
@@ -523,149 +264,14 @@ export function ApiKeyManagerSection({ apiBase, sessionStorageKey }: ApiKeyManag
           ) : (
             <div className="apikey-form">
               <label className="apikey-field">
-                <span className="apikey-field-title">FIRST_PASS_ANALYSIS_API_KEY</span>
-                <small className="apikey-field-help">用于首轮分析接口（`POST /api/products/:recordId/analyze`）。</small>
+                <span className="apikey-field-title">UNIFIED_API_KEY</span>
+                <small className="apikey-field-help">该 Key 会用于首轮分析、图词请求、短视频提示词、短视频创建与查询接口。</small>
                 <input
                   autoComplete="off"
-                  onChange={(event) => setApiKeys((prev) => ({ ...prev, firstPassApiKey: event.target.value }))}
-                  placeholder="首轮分析 API Key"
+                  onChange={(event) => setUnifiedApiKey(event.target.value)}
+                  placeholder="请输入统一 API Key"
                   type="password"
-                  value={apiKeys.firstPassApiKey}
-                />
-              </label>
-              <label className="apikey-field">
-                <span className="apikey-field-title">FIRST_PASS_ANALYSIS_MODEL</span>
-                <small className="apikey-field-help">首轮分析模型名称（留空则使用服务端默认值）。</small>
-                <input
-                  autoComplete="off"
-                  onChange={(event) => setRequestModels((prev) => ({ ...prev, firstPassModel: event.target.value }))}
-                  placeholder="可选模型名"
-                  type="text"
-                  value={requestModels.firstPassModel}
-                />
-              </label>
-              <label className="apikey-field">
-                <span className="apikey-field-title">FIRST_PASS_ANALYSIS_API_URL</span>
-                <small className="apikey-field-help">首轮分析请求地址（`POST /api/products/:recordId/analyze`）。</small>
-                <input
-                  autoComplete="off"
-                  onChange={(event) => setApiEndpoints((prev) => ({ ...prev, firstPassAnalysisApiUrl: event.target.value }))}
-                  placeholder="https://.../v1/chat/completions"
-                  type="text"
-                  value={apiEndpoints.firstPassAnalysisApiUrl}
-                />
-              </label>
-
-              <label className="apikey-field">
-                <span className="apikey-field-title">SECOND_STAGE_PROMPT_API_KEY</span>
-                <small className="apikey-field-help">用于图词包生成接口（`POST /api/products/:recordId/prompt-pack`）。</small>
-                <input
-                  autoComplete="off"
-                  onChange={(event) => setApiKeys((prev) => ({ ...prev, promptPackApiKey: event.target.value }))}
-                  placeholder="图词包 API Key"
-                  type="password"
-                  value={apiKeys.promptPackApiKey}
-                />
-              </label>
-              <label className="apikey-field">
-                <span className="apikey-field-title">SECOND_STAGE_PROMPT_MODEL</span>
-                <small className="apikey-field-help">图词包生成模型名称（留空则使用服务端默认值）。</small>
-                <input
-                  autoComplete="off"
-                  onChange={(event) => setRequestModels((prev) => ({ ...prev, promptPackModel: event.target.value }))}
-                  placeholder="可选模型名"
-                  type="text"
-                  value={requestModels.promptPackModel}
-                />
-              </label>
-              <label className="apikey-field">
-                <span className="apikey-field-title">SECOND_STAGE_PROMPT_API_URL</span>
-                <small className="apikey-field-help">图词包生成请求地址（`POST /api/products/:recordId/prompt-pack`）。</small>
-                <input
-                  autoComplete="off"
-                  onChange={(event) => setApiEndpoints((prev) => ({ ...prev, secondStagePromptApiUrl: event.target.value }))}
-                  placeholder="https://.../v1/chat/completions"
-                  type="text"
-                  value={apiEndpoints.secondStagePromptApiUrl}
-                />
-              </label>
-
-              <label className="apikey-field">
-                <span className="apikey-field-title">SHORT_VIDEO_PROMPT_API_KEY</span>
-                <small className="apikey-field-help">用于短视频脚本生成接口（`POST /api/products/:recordId/video-script`）。</small>
-                <input
-                  autoComplete="off"
-                  onChange={(event) => setApiKeys((prev) => ({ ...prev, shortVideoPromptApiKey: event.target.value }))}
-                  placeholder="短视频脚本 API Key"
-                  type="password"
-                  value={apiKeys.shortVideoPromptApiKey}
-                />
-              </label>
-              <label className="apikey-field">
-                <span className="apikey-field-title">SHORT_VIDEO_PROMPT_MODEL</span>
-                <small className="apikey-field-help">短视频脚本模型名称（留空则使用服务端默认值）。</small>
-                <input
-                  autoComplete="off"
-                  onChange={(event) => setRequestModels((prev) => ({ ...prev, shortVideoPromptModel: event.target.value }))}
-                  placeholder="可选模型名"
-                  type="text"
-                  value={requestModels.shortVideoPromptModel}
-                />
-              </label>
-              <label className="apikey-field">
-                <span className="apikey-field-title">SHORT_VIDEO_PROMPT_API_URL</span>
-                <small className="apikey-field-help">短视频脚本请求地址（`POST /api/products/:recordId/video-script`）。</small>
-                <input
-                  autoComplete="off"
-                  onChange={(event) => setApiEndpoints((prev) => ({ ...prev, shortVideoPromptApiUrl: event.target.value }))}
-                  placeholder="https://.../v1/chat/completions"
-                  type="text"
-                  value={apiEndpoints.shortVideoPromptApiUrl}
-                />
-              </label>
-
-              <label className="apikey-field">
-                <span className="apikey-field-title">SHORT_VIDEO_RENDER_API_KEY</span>
-                <small className="apikey-field-help">用于短视频生成/查询接口（`POST /api/products/:recordId/video-clips/generate`）。</small>
-                <input
-                  autoComplete="off"
-                  onChange={(event) => setApiKeys((prev) => ({ ...prev, shortVideoRenderApiKey: event.target.value }))}
-                  placeholder="短视频渲染 API Key"
-                  type="password"
-                  value={apiKeys.shortVideoRenderApiKey}
-                />
-              </label>
-              <label className="apikey-field">
-                <span className="apikey-field-title">SHORT_VIDEO_RENDER_MODEL</span>
-                <small className="apikey-field-help">短视频生成/查询模型名称（通常为视频模型名）。</small>
-                <input
-                  autoComplete="off"
-                  onChange={(event) => setRequestModels((prev) => ({ ...prev, shortVideoRenderModel: event.target.value }))}
-                  placeholder="模型名称"
-                  type="text"
-                  value={requestModels.shortVideoRenderModel}
-                />
-              </label>
-              <label className="apikey-field">
-                <span className="apikey-field-title">SHORT_VIDEO_CREATE_API_URL</span>
-                <small className="apikey-field-help">创建视频请求地址（例如 `https://api.vectorengine.ai/v1/video/create`）。</small>
-                <input
-                  autoComplete="off"
-                  onChange={(event) => setApiEndpoints((prev) => ({ ...prev, shortVideoCreateApiUrl: event.target.value }))}
-                  placeholder="https://api.vectorengine.ai/v1/video/create"
-                  type="text"
-                  value={apiEndpoints.shortVideoCreateApiUrl}
-                />
-              </label>
-              <label className="apikey-field">
-                <span className="apikey-field-title">SHORT_VIDEO_QUERY_API_URL</span>
-                <small className="apikey-field-help">查询视频状态请求地址（例如 `https://api.vectorengine.ai/v1/video/query`）。</small>
-                <input
-                  autoComplete="off"
-                  onChange={(event) => setApiEndpoints((prev) => ({ ...prev, shortVideoQueryApiUrl: event.target.value }))}
-                  placeholder="https://api.vectorengine.ai/v1/video/query"
-                  type="text"
-                  value={apiEndpoints.shortVideoQueryApiUrl}
+                  value={unifiedApiKey}
                 />
               </label>
 
@@ -683,68 +289,6 @@ export function ApiKeyManagerSection({ apiBase, sessionStorageKey }: ApiKeyManag
               <small className="apikey-note">最近更新：{toDate(keyUpdatedAt)}</small>
             </div>
           )}
-        </article>
-
-        <article className="apikey-card">
-          <h3>修改管理页密码</h3>
-          <p>点击按钮后，系统会自动将 16 位验证码发送到指定邮箱。验证码不会在页面展示，请从邮箱获取后输入校验。</p>
-          <div className="apikey-form">
-            <div className="apikey-actions">
-              <button className="primary-btn" disabled={resetPending} onClick={() => void handleRequestResetCode()} type="button">
-                {resetPending ? "处理中..." : "生成16位验证码并发起邮件"}
-              </button>
-            </div>
-            <small className="apikey-note">
-              验证码仅可从邮箱获取，页面不显示明文。{resetCodeExpiresAt ? `（本次有效期至 ${toDate(resetCodeExpiresAt)}）` : ""}
-            </small>
-            <label className="apikey-field">
-              输入邮箱中的16位验证码
-              <input
-                inputMode="numeric"
-                maxLength={16}
-                onChange={(event) => setResetCodeInput(event.target.value.replace(/\D/g, "").slice(0, 16))}
-                placeholder="请输入16位数字"
-                type="text"
-                value={resetCodeInput}
-              />
-            </label>
-            <div className="apikey-actions">
-              <button className="ghost" disabled={resetPending} onClick={() => void handleVerifyResetCode()} type="button">
-                {resetPending ? "校验中..." : "校验验证码"}
-              </button>
-            </div>
-            <small className="apikey-note">{resetVerifiedUntil ? `已通过校验，有效期至 ${toDate(resetVerifiedUntil)}` : "尚未通过验证码校验"}</small>
-            <label className="apikey-field">
-              新密码
-              <input
-                autoComplete="new-password"
-                disabled={!resetVerifiedUntil}
-                onChange={(event) => setNewManagerPassword(event.target.value)}
-                placeholder="至少8位"
-                type="password"
-                value={newManagerPassword}
-              />
-            </label>
-            <label className="apikey-field">
-              确认新密码
-              <input
-                autoComplete="new-password"
-                disabled={!resetVerifiedUntil}
-                onChange={(event) => setNewManagerPasswordConfirm(event.target.value)}
-                placeholder="再次输入新密码"
-                type="password"
-                value={newManagerPasswordConfirm}
-              />
-            </label>
-            <button
-              className="danger-btn"
-              disabled={resetPending || !resetVerifiedUntil}
-              onClick={() => void handleUpdateManagerPassword()}
-              type="button"
-            >
-              {resetPending ? "提交中..." : resetVerifiedUntil ? "确认修改密码" : "请先校验验证码"}
-            </button>
-          </div>
         </article>
       </div>
     </section>

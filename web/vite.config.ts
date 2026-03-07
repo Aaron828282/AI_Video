@@ -6,15 +6,19 @@ export default defineConfig({
   server: {
     proxy: {
       "/api": {
-        target: "http://127.0.0.1:8787",
+        target: "http://127.0.0.1:8790",
         changeOrigin: true
       },
       "/static": {
-        target: "http://127.0.0.1:8787",
+        target: "http://127.0.0.1:8790",
         changeOrigin: true
       },
       "/products/manual": {
-        target: "http://127.0.0.1:8787",
+        target: "http://127.0.0.1:8790",
+        changeOrigin: true
+      },
+      "/downloads": {
+        target: "http://127.0.0.1:8790",
         changeOrigin: true
       }
     }

@@ -1,5 +1,5 @@
 const API_BASE_STORAGE_KEY = "apiBase";
-const DEFAULT_API_BASE = "http://127.0.0.1:8787";
+const DEFAULT_API_BASE = "http://127.0.0.1:8790";
 const RECENT_KEY = "recentRecords";
 const MAX_RECENT = 20;
 let apiBase = DEFAULT_API_BASE;
@@ -250,8 +250,30 @@ async function scrapeByActiveTab(droppedImage) {
         }
         return false;
       };
+      const normalize1688ImageUrlLocal = (url) => {
+        const value = String(url || "").trim();
+        if (!/^https?:\/\//i.test(value)) {
+          return value;
+        }
+        try {
+          const parsed = new URL(value);
+          if (!/alicdn\.com$/i.test(parsed.hostname)) {
+            return value;
+          }
+          const fixedPath = String(parsed.pathname || "").replace(/(\.(?:jpe?g|png|gif|bmp))_\.(?:webp|avif)$/i, "$1");
+          if (fixedPath && fixedPath !== parsed.pathname) {
+            parsed.pathname = fixedPath;
+            parsed.search = "";
+            parsed.hash = "";
+            return parsed.href;
+          }
+        } catch (_error) {
+          return value;
+        }
+        return value;
+      };
       const normalizeImageUrl = (value) => {
-        const absolute = normalize1688ImageUrl(toAbs(value));
+        const absolute = normalize1688ImageUrlLocal(toAbs(value));
         return isLikelyImageUrl(absolute) ? absolute : "";
       };
 
