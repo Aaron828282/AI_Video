@@ -9,7 +9,7 @@
       "package.json",
       "package-lock.json"
     ],
-    "buildCommand": "npm ci && npm --workspace web run build"
+    "buildCommand": "npm install --include=dev --workspaces --include-workspace-root && npm --workspace web run build"
   },
   "deploy": {
     "startCommand": "npm --workspace server run start",
