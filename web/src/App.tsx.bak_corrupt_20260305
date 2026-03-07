@@ -1,0 +1,3843 @@
+﻿import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type {
+  AnalyzeStatusResponse,
+  AnalyzeTriggerResponse,
+  ApiListResponse,
+  GenerateClipVideoResponse,
+  GenerateSecondPromptResponse,
+  GenerateVideoScriptResponse,
+  ProductAnalysisState,
+  ProductRecord,
+  SecondPromptStatusResponse,
+  SecondPromptGenerationState,
+  VideoClipGenerationState,
+  VideoScriptGenerationState
+} from "./types";
+
+const EXPLICIT_API_BASE = String(import.meta.env.VITE_API_BASE ?? "").trim();
+const DEFAULT_LOCAL_API_BASE = "http://127.0.0.1:8787";
+
+function normalizeApiBase(input: unknown) {
+  return String(input || "").trim().replace(/\/+$/, "");
+}
+
+function resolveApiBase() {
+  if (EXPLICIT_API_BASE) {
+    return normalizeApiBase(EXPLICIT_API_BASE);
+  }
+  if (typeof window !== "undefined") {
+    const origin = normalizeApiBase(window.location.origin);
+    if (String(window.location.port || "") === "8787" && origin) {
+      return origin;
+    }
+  }
+  return DEFAULT_LOCAL_API_BASE;
+}
+
+function buildApiBaseCandidates(primaryBase: string) {
+  const candidates: string[] = [];
+  const addCandidate = (value: string) => {
+    const normalized = normalizeApiBase(value);
+    if (normalized && !candidates.includes(normalized)) {
+      candidates.push(normalized);
+    }
+  };
+  addCandidate(primaryBase);
+  if (!EXPLICIT_API_BASE) {
+    if (typeof window !== "undefined" && String(window.location.port || "") === "8787") {
+      addCandidate(window.location.origin);
+    }
+    addCandidate(DEFAULT_LOCAL_API_BASE);
+    addCandidate("http://localhost:8787");
+  }
+  return candidates;
+}
+
+const API_BASE = resolveApiBase();
+const API_BASE_CANDIDATES = buildApiBaseCandidates(API_BASE);
+
+function buildApiUrl(path: string, base = API_BASE) {
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  return `${normalizeApiBase(base)}${normalizedPath}`;
+}
+
+async function apiFetch(path: string, init?: RequestInit) {
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  let lastError: unknown = null;
+  for (const base of API_BASE_CANDIDATES) {
+    try {
+      return await fetch(buildApiUrl(normalizedPath, base), init);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error("Failed to fetch");
+}
+const GENSPARK_IMAGE_URL = "https://www.genspark.ai/ai_image";
+const MAIN_IMAGE_OPENING =
+  "浣犳槸涓€鍚嶇數鍟嗗晢鍝佺敓鍥惧姪鎵嬨€傝鍩轰簬浠ヤ笅銆愪富鍥炬彁绀鸿瘝銆戦€愭潯鐢熸垚1:1涓诲浘銆傝姹傦細淇濇寔鍚屼竴鍟嗗搧涓讳綋銆佹潗璐ㄣ€佺粨鏋勫拰姣斾緥涓€鑷达紱涓嶈鏂板鍘熷浘涓嶅瓨鍦ㄧ殑鏂囧瓧/Logo锛涚敾闈㈤€傚悎宸磋タ鐢靛晢骞冲彴涓婃灦銆傝嫢鎻愮ず璇嶄笌鍙傝€冨浘涓殑浜у搧澶栬瀛樺湪宸埆锛屽繀椤讳紭鍏堜互鍙傝€冨浘澶栬涓哄噯杩涜缁樺埗锛屽苟涓ユ牸淇濇寔浜у搧涓讳綋涓€鑷存€с€?;
+const DETAIL_IMAGE_OPENING =
+  "浣犳槸涓€鍚嶇數鍟嗗晢鍝佽鎯呭浘鐢熷浘鍔╂墜銆傝鍩轰簬浠ヤ笅銆愯鎯呴〉鎻愮ず璇嶃€戦€愭潯鐢熸垚9:16璇︽儏鍥俱€傝姹傦細淇濇寔涓庝富鍥惧悓娆惧晢鍝佷竴鑷存€э紱绐佸嚭鍔熻兘婕旂ず涓庝俊鎭〃杈撅紱涓嶈鏂板鍘熷浘涓嶅瓨鍦ㄧ殑鍝佺墝鏂囧瓧鎴栫粨鏋勩€傝嫢鎻愮ず璇嶄笌鍙傝€冨浘涓殑浜у搧澶栬瀛樺湪宸埆锛屽繀椤讳紭鍏堜互鍙傝€冨浘澶栬涓哄噯杩涜缁樺埗锛屽苟涓ユ牸淇濇寔浜у搧涓讳綋涓€鑷存€с€?;
+const PRODUCT_CONSISTENCY_RULE =
+  "鑻ユ彁绀鸿瘝涓庡弬鑰冨浘涓殑浜у搧澶栬瀛樺湪宸埆锛屽繀椤讳紭鍏堜互鍙傝€冨浘澶栬涓哄噯杩涜缁樺埗锛屽苟涓ユ牸淇濇寔浜у搧涓讳綋涓€鑷存€с€?;
+const VIDEO_SCRIPT_AGENT_ENABLED = true;
+const API_KEY_MANAGER_SESSION_STORAGE_KEY = "capturehub_api_key_manager_token";
+
+const DEFAULT_ANALYSIS_STATE: ProductAnalysisState = {
+  status: "idle",
+  jobId: null,
+  error: null,
+  updatedAt: null,
+  result: null
+};
+
+const DEFAULT_SECOND_PROMPT_STATE: SecondPromptGenerationState = {
+  status: "idle",
+  jobId: null,
+  error: null,
+  updatedAt: null,
+  result: null
+};
+
+const DEFAULT_VIDEO_SCRIPT_STATE: VideoScriptGenerationState = {
+  status: "idle",
+  error: null,
+  updatedAt: null,
+  result: null
+};
+
+const DEFAULT_VIDEO_CLIP_GENERATION_STATE: VideoClipGenerationState = {
+  updatedAt: null,
+  items: []
+};
+
+function toCurrency(value: number | null) {
+  if (value === null || Number.isNaN(value)) {
+    return "Price N/A";
+  }
+  return `CNY ${value.toFixed(2)}`;
+}
+
+function toDate(value: string | null | undefined) {
+  if (!value) {
+    return "-";
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "-";
+  }
+  return date.toLocaleString("zh-CN", { hour12: false });
+}
+
+function isHttpUrl(value: string | null | undefined) {
+  return /^https?:\/\//i.test(String(value || "").trim());
+}
+
+function normalizeAnalysisState(input: ProductRecord["analysis"]): ProductAnalysisState {
+  const source = input ?? DEFAULT_ANALYSIS_STATE;
+  const allowed = new Set(["idle", "queued", "processing", "completed", "failed"]);
+  const status = allowed.has(source.status) ? source.status : "idle";
+  const resultSource = source.result;
+  return {
+    status,
+    jobId: source.jobId ?? null,
+    error: source.error ?? null,
+    updatedAt: source.updatedAt ?? null,
+    result: resultSource
+      ? {
+          materialAnalysis: resultSource.materialAnalysis ?? "",
+          appearanceDescription: resultSource.appearanceDescription ?? "",
+          colorAnalysis: resultSource.colorAnalysis ?? "",
+          sizeAndSpecs: resultSource.sizeAndSpecs ?? "",
+          usageAndTargetAudience: resultSource.usageAndTargetAudience ?? "",
+          detailedDescription: resultSource.detailedDescription ?? "",
+          sellingPoints: Array.isArray(resultSource.sellingPoints) ? resultSource.sellingPoints.map((item) => String(item || "")).filter(Boolean) : [],
+          procurementRisks: Array.isArray(resultSource.procurementRisks)
+            ? resultSource.procurementRisks.map((item) => String(item || "")).filter(Boolean)
+            : [],
+          whiteBackgroundImageUrl: resultSource.whiteBackgroundImageUrl ?? "",
+          referenceImageUrl: resultSource.referenceImageUrl ?? "",
+          generatedAt: resultSource.generatedAt ?? null
+        }
+      : null
+  };
+}
+
+function normalizeSecondPromptState(input: ProductRecord["secondPromptGeneration"]): SecondPromptGenerationState {
+  const source = input ?? DEFAULT_SECOND_PROMPT_STATE;
+  const allowed = new Set(["idle", "processing", "completed", "failed"]);
+  const status = allowed.has(source.status) ? source.status : "idle";
+  return {
+    status,
+    jobId: source.jobId ?? null,
+    error: source.error ?? null,
+    updatedAt: source.updatedAt ?? null,
+    result: source.result
+      ? {
+          referenceImageUrl: source.result.referenceImageUrl ?? "",
+          templateVersion: source.result.templateVersion ?? "v2.1",
+          detailAspectRatio: source.result.detailAspectRatio === "1:1" ? "1:1" : "9:16",
+          output: source.result.output ?? null,
+          outputText: source.result.outputText ?? "",
+          generatedAt: source.result.generatedAt ?? null
+        }
+      : null
+  };
+}
+
+function normalizeVideoScriptState(input: ProductRecord["videoScriptGeneration"]): VideoScriptGenerationState {
+  const source = input ?? DEFAULT_VIDEO_SCRIPT_STATE;
+  const allowed = new Set(["idle", "processing", "completed", "failed"]);
+  const status = allowed.has(source.status) ? source.status : "idle";
+  const resultSource = source.result;
+  return {
+    status,
+    error: source.error ?? null,
+    updatedAt: source.updatedAt ?? null,
+    result: resultSource
+      ? {
+          inputPayload:
+            resultSource.inputPayload && typeof resultSource.inputPayload === "object"
+              ? {
+                  product_images: Array.isArray(resultSource.inputPayload.product_images)
+                    ? resultSource.inputPayload.product_images.map((item) => String(item || "")).filter(Boolean)
+                    : [],
+                  product_params:
+                    resultSource.inputPayload.product_params && typeof resultSource.inputPayload.product_params === "object"
+                      ? resultSource.inputPayload.product_params
+                      : {}
+                }
+              : null,
+          outputPayload:
+            resultSource.outputPayload && typeof resultSource.outputPayload === "object"
+              ? {
+                  product_info:
+                    resultSource.outputPayload.product_info && typeof resultSource.outputPayload.product_info === "object"
+                      ? resultSource.outputPayload.product_info
+                      : null,
+                  script_set_1:
+                    resultSource.outputPayload.script_set_1 && typeof resultSource.outputPayload.script_set_1 === "object"
+                      ? resultSource.outputPayload.script_set_1
+                      : null,
+                  script_set_2:
+                    resultSource.outputPayload.script_set_2 && typeof resultSource.outputPayload.script_set_2 === "object"
+                      ? resultSource.outputPayload.script_set_2
+                      : null,
+                  script_set_3:
+                    resultSource.outputPayload.script_set_3 && typeof resultSource.outputPayload.script_set_3 === "object"
+                      ? resultSource.outputPayload.script_set_3
+                      : null,
+                  scripts: Array.isArray(resultSource.outputPayload.scripts)
+                    ? resultSource.outputPayload.scripts
+                        .map((script) => {
+                          const sourceScript = script as Record<string, unknown>;
+                          const shots = Array.isArray(sourceScript["shots"]) ? (sourceScript["shots"] as unknown[]) : [];
+                          return {
+                            script_id: String(sourceScript["script_id"] || ""),
+                            digital_human_base_image_prompt: String(sourceScript["digital_human_base_image_prompt"] || ""),
+                            shots: shots
+                              .map((shot) => {
+                                const sourceShot = shot as Record<string, unknown>;
+                                return {
+                                  shot_id: String(sourceShot["shot_id"] || ""),
+                                  image_prompt: String(sourceShot["image_prompt"] || ""),
+                                  video_prompt: String(sourceShot["video_prompt"] || ""),
+                                  manual_shoot_required: Boolean(sourceShot["manual_shoot_required"]),
+                                  manual_shoot_script: sourceShot["manual_shoot_script"] ? String(sourceShot["manual_shoot_script"]) : null
+                                };
+                              })
+                              .filter(Boolean)
+                          };
+                        })
+                        .filter(Boolean)
+                    : [],
+                   production_notes:
+                     resultSource.outputPayload.production_notes && typeof resultSource.outputPayload.production_notes === "object"
+                       ? resultSource.outputPayload.production_notes
+                       : null,
+                   raw: resultSource.outputPayload.raw && typeof resultSource.outputPayload.raw === "object" ? resultSource.outputPayload.raw : null
+                 }
+              : null,
+          modelRequest:
+            resultSource.modelRequest && typeof resultSource.modelRequest === "object"
+              ? {
+                  endpoint: String(resultSource.modelRequest.endpoint || ""),
+                  requestBody:
+                    resultSource.modelRequest.requestBody && typeof resultSource.modelRequest.requestBody === "object"
+                      ? (resultSource.modelRequest.requestBody as Record<string, unknown>)
+                      : null,
+                  sentAt: resultSource.modelRequest.sentAt ? String(resultSource.modelRequest.sentAt) : null
+                }
+              : null,
+          scriptPackages: Array.isArray(resultSource.scriptPackages)
+            ? resultSource.scriptPackages
+                .map((script) => {
+                  const sourceScript = script as Record<string, unknown>;
+                  const shots = Array.isArray(sourceScript["shots"]) ? (sourceScript["shots"] as unknown[]) : [];
+                  return {
+                    scriptId: String(sourceScript["scriptId"] || ""),
+                    digitalHumanBaseImagePrompt: String(sourceScript["digitalHumanBaseImagePrompt"] || ""),
+                    shots: shots
+                      .map((shot) => {
+                        const sourceShot = shot as Record<string, unknown>;
+                        return {
+                          shotId: String(sourceShot["shotId"] || ""),
+                          imagePrompt: String(sourceShot["imagePrompt"] || ""),
+                          videoPrompt: String(sourceShot["videoPrompt"] || ""),
+                          manualShootRequired: Boolean(sourceShot["manualShootRequired"]),
+                          manualShootScript: String(sourceShot["manualShootScript"] || "")
+                        };
+                      })
+                      .filter(Boolean)
+                  };
+                })
+                .filter(Boolean) as NonNullable<VideoScriptGenerationState["result"]>["scriptPackages"]
+            : [],
+          scriptSets: Array.isArray(resultSource.scriptSets)
+            ? resultSource.scriptSets
+                .map((set) => {
+                  if (!set || typeof set !== "object") {
+                    return null;
+                  }
+                  const key = String(set.setKey || "").trim();
+                  if (key !== "script_set_1" && key !== "script_set_2" && key !== "script_set_3") {
+                    return null;
+                  }
+                  return {
+                    setKey: key as "script_set_1" | "script_set_2" | "script_set_3",
+                    scriptName: String(set.scriptName || ""),
+                    strategy: String(set.strategy || ""),
+                    targetAudience: String(set.targetAudience || ""),
+                    totalDuration: String(set.totalDuration || ""),
+                    videoStructure: String(set.videoStructure || ""),
+                    clips: Array.isArray(set.clips)
+                      ? set.clips.map((clip) => ({
+                          clipNumber: typeof clip?.clipNumber === "number" ? clip.clipNumber : null,
+                          duration: String(clip?.duration || ""),
+                          sceneType: String(clip?.sceneType || ""),
+                          sceneDescription: String(clip?.sceneDescription || ""),
+                          marketingPurpose: String(clip?.marketingPurpose || ""),
+                          generationMethod: String(clip?.generationMethod || ""),
+                          aiOrReal: String(clip?.aiOrReal || ""),
+                          firstFramePrompt: String(clip?.firstFramePrompt ?? clip?.imageGenerationPrompt ?? ""),
+                          lastFramePrompt: String(clip?.lastFramePrompt ?? ""),
+                          videoAudioPrompt: String(clip?.videoAudioPrompt || ""),
+                          imageGenerationPrompt: String(
+                            clip?.imageGenerationPrompt ?? clip?.firstFramePrompt ?? ""
+                          ),
+                          videoGenerationPrompt: String(clip?.videoGenerationPrompt || ""),
+                          audioDescription: String(clip?.audioDescription || ""),
+                          narrationPortuguese: String(clip?.narrationPortuguese || ""),
+                          visualElements: String(clip?.visualElements || ""),
+                          styleNotes: String(clip?.styleNotes || "")
+                        }))
+                      : [],
+                    raw: set.raw && typeof set.raw === "object" ? set.raw : {}
+                  };
+                })
+                .filter(Boolean) as NonNullable<VideoScriptGenerationState["result"]>["scriptSets"]
+            : [],
+          generatedAt: resultSource.generatedAt ?? null
+        }
+      : null
+  };
+}
+
+function normalizeVideoClipGenerationState(input: ProductRecord["videoClipGeneration"]): VideoClipGenerationState {
+  const source = input ?? DEFAULT_VIDEO_CLIP_GENERATION_STATE;
+  return {
+    updatedAt: source.updatedAt ?? null,
+    items: Array.isArray(source.items)
+      ? source.items
+          .map((item) => {
+            const setKey = String(item?.setKey || "").trim();
+            const clipIndex = typeof item?.clipIndex === "number" && Number.isFinite(item.clipIndex) ? Math.max(0, Math.floor(item.clipIndex)) : 0;
+            const key = String(item?.key || `${setKey}::${clipIndex}`).trim();
+            if (!setKey || !key) {
+              return null;
+            }
+            const rawStatus = String(item?.status || "idle").trim();
+            const status = ["idle", "queued", "processing", "succeeded", "failed"].includes(rawStatus) ? rawStatus : "idle";
+            return {
+              key,
+              setKey,
+              clipIndex,
+              status: status as VideoClipGenerationState["items"][number]["status"],
+              jobId: item?.jobId ? String(item.jobId) : null,
+              taskId: item?.taskId ? String(item.taskId) : null,
+              prompt: String(item?.prompt || ""),
+              firstFrameUrl: String(item?.firstFrameUrl || ""),
+              lastFrameUrl: String(item?.lastFrameUrl || ""),
+              firstFrameName: String(item?.firstFrameName || ""),
+              lastFrameName: String(item?.lastFrameName || ""),
+              aspectRatio: String(item?.aspectRatio || "9:16"),
+              retryCount: typeof item?.retryCount === "number" && Number.isFinite(item.retryCount) ? Math.max(0, Math.floor(item.retryCount)) : 0,
+              maxRetries: typeof item?.maxRetries === "number" && Number.isFinite(item.maxRetries) ? Math.max(1, Math.floor(item.maxRetries)) : 3,
+              videoUrl: String(item?.videoUrl || ""),
+              error: item?.error ? String(item.error) : null,
+              createdAt: item?.createdAt ? String(item.createdAt) : null,
+              startedAt: item?.startedAt ? String(item.startedAt) : null,
+              completedAt: item?.completedAt ? String(item.completedAt) : null,
+              updatedAt: item?.updatedAt ? String(item.updatedAt) : null
+            };
+          })
+          .filter(Boolean) as VideoClipGenerationState["items"]
+      : []
+  };
+}
+
+function normalizeProductRecord(item: ProductRecord): ProductRecord {
+  const imageList = Array.isArray(item.images) ? item.images.filter((entry) => typeof entry === "string" && entry.trim()) : [];
+  return {
+    ...item,
+    images: [...new Set([item.triggeredImage, ...imageList].filter(Boolean))],
+    analysis: normalizeAnalysisState(item.analysis),
+    videoScriptGeneration: normalizeVideoScriptState(item.videoScriptGeneration),
+    secondPromptGeneration: normalizeSecondPromptState(item.secondPromptGeneration),
+    videoClipGeneration: normalizeVideoClipGenerationState(item.videoClipGeneration)
+  };
+}
+
+function analysisStatusLabel(status: ProductAnalysisState["status"]) {
+  switch (status) {
+    case "queued":
+      return "鎺掗槦涓?;
+    case "processing":
+      return "鍒嗘瀽涓?;
+    case "completed":
+      return "宸插畬鎴?;
+    case "failed":
+      return "澶辫触";
+    default:
+      return "鏈垎鏋?;
+  }
+}
+
+function secondPromptStatusLabel(status: SecondPromptGenerationState["status"]) {
+  switch (status) {
+    case "processing":
+      return "鐢熸垚涓?;
+    case "completed":
+      return "宸插畬鎴?;
+    case "failed":
+      return "澶辫触";
+    default:
+      return "鏈敓鎴?;
+  }
+}
+
+function videoScriptStatusLabel(status: VideoScriptGenerationState["status"]) {
+  switch (status) {
+    case "processing":
+      return "鐢熸垚涓?;
+    case "completed":
+      return "宸插畬鎴?;
+    case "failed":
+      return "澶辫触";
+    default:
+      return "鏈敓鎴?;
+  }
+}
+
+type PromptCardEntry = {
+  imageId: string;
+  sceneType: string;
+  sceneDescription: string;
+  promptEn: string;
+};
+
+type PromptSection = {
+  title: string;
+  cards: PromptCardEntry[];
+  copyText: string;
+};
+
+type SplitPromptSections = {
+  main: PromptSection;
+  detail: PromptSection;
+};
+
+type ManualUploadResponse = {
+  ok: boolean;
+  item?: ProductRecord;
+  productLink?: string;
+  message?: string;
+};
+
+type VideoScriptRequestOptions = {
+  productInfoText?: string;
+};
+
+function buildVideoClipInfoBundle(sceneDescription: string, marketingPurpose: string, videoAudioPrompt: string) {
+  const lines = [
+    `scene_description: ${safeText(sceneDescription)}`,
+    `marketing_purpose: ${safeText(marketingPurpose)}`,
+    `video_audio_prompt: ${safeText(videoAudioPrompt)}`
+  ];
+  return lines.join("\n");
+}
+
+function safeText(input: unknown) {
+  return typeof input === "string" ? input.trim() : "";
+}
+
+function toPrettyJson(input: unknown, maxLength = 0) {
+  if (input === null || input === undefined) {
+    return "";
+  }
+  let text = "";
+  try {
+    text = JSON.stringify(input, null, 2);
+  } catch (_error) {
+    text = String(input);
+  }
+  if (maxLength <= 0 || text.length <= maxLength) {
+    return text;
+  }
+  const hiddenLength = text.length - maxLength;
+  return `${text.slice(0, maxLength)}\n\n... 宸叉埅鏂?${hiddenLength} 涓瓧绗;
+}
+
+function toEditableProductInfoText(input: unknown) {
+  if (typeof input === "string") {
+    return input.trim();
+  }
+  if (!input || typeof input !== "object") {
+    return "";
+  }
+  return toPrettyJson(input);
+}
+
+function buildAnalysisReferenceText(result: ProductAnalysisState["result"] | null) {
+  if (!result) {
+    return "";
+  }
+  const lines: string[] = [];
+  const pushLine = (label: string, value: unknown) => {
+    const text = safeText(value);
+    if (text) {
+      lines.push(`${label}: ${text}`);
+    }
+  };
+  pushLine("鏉愯川", result.materialAnalysis);
+  pushLine("澶栬", result.appearanceDescription);
+  pushLine("棰滆壊", result.colorAnalysis);
+  pushLine("灏哄/瑙勬牸", result.sizeAndSpecs);
+  pushLine("浣跨敤鍦烘櫙/鐩爣浜虹兢", result.usageAndTargetAudience);
+  pushLine("璇︽儏鎻忚堪", result.detailedDescription);
+  if (Array.isArray(result.sellingPoints) && result.sellingPoints.length) {
+    lines.push(`鍗栫偣: ${result.sellingPoints.map((item) => safeText(item)).filter(Boolean).join("锛?)}`);
+  }
+  if (Array.isArray(result.procurementRisks) && result.procurementRisks.length) {
+    lines.push(`閲囪喘椋庨櫓: ${result.procurementRisks.map((item) => safeText(item)).filter(Boolean).join("锛?)}`);
+  }
+  return lines.join("\n");
+}
+
+function normalizeRequestErrorMessage(error: unknown, fallbackMessage: string) {
+  if (!(error instanceof Error)) {
+    return fallbackMessage;
+  }
+  const rawMessage = safeText(error.message);
+  if (!rawMessage) {
+    return fallbackMessage;
+  }
+  const lowered = rawMessage.toLowerCase();
+  if (lowered.includes("failed to fetch") || lowered.includes("networkerror") || lowered.includes("load failed")) {
+    return `鏃犳硶杩炴帴鍚庣鏈嶅姟锛岃纭鏈嶅姟宸插惎鍔紙${API_BASE_CANDIDATES.join(" / ")}锛夈€俙;
+  }
+  return rawMessage;
+}
+
+function toObjectArray(input: unknown) {
+  if (!Array.isArray(input)) {
+    return [];
+  }
+  return input.filter((item) => item && typeof item === "object") as Array<Record<string, unknown>>;
+}
+
+function parseSecondPromptOutput(result: NonNullable<SecondPromptGenerationState["result"]>) {
+  if (result.output && typeof result.output === "object") {
+    return result.output as Record<string, unknown>;
+  }
+  const text = safeText(result.outputText);
+  if (!text) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(text);
+    return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : null;
+  } catch (_error) {
+    return null;
+  }
+}
+
+function normalizePromptCards(input: unknown, fallbackPrefix: string) {
+  return toObjectArray(input).map((item, index) => {
+    const rawId = safeText(item.image_id ?? item.imageId);
+    const imageId = rawId || `${fallbackPrefix}_${String(index + 1).padStart(2, "0")}`;
+    return {
+      imageId,
+      sceneType: safeText(item.scene_type ?? item.sceneType),
+      sceneDescription: safeText(item.scene_description ?? item.sceneDescription),
+      promptEn: safeText(item.prompt_en ?? item.promptEn ?? item.prompt)
+    };
+  });
+}
+
+function buildPromptCopyText(opening: string, title: string, cards: PromptCardEntry[]) {
+  const lines = [opening, "", `銆?{title}銆慲, `鍏?${cards.length} 鏉°€俙, ""];
+  if (!cards.length) {
+    lines.push("鏆傛棤鍙敤鎻愮ず璇嶃€?);
+    return lines.join("\n");
+  }
+  cards.forEach((card, index) => {
+    lines.push(`${index + 1}. ${card.imageId}${card.sceneDescription ? ` - ${card.sceneDescription}` : ""}`);
+    if (card.sceneType) {
+      lines.push(`鍦烘櫙绫诲瀷: ${card.sceneType}`);
+    }
+    const promptBody = card.promptEn || "锛堢┖锛?;
+    lines.push(`EN: ${promptBody}`);
+    lines.push(`涓€鑷存€ц姹? ${PRODUCT_CONSISTENCY_RULE}`);
+    lines.push("");
+  });
+  return lines.join("\n").trim();
+}
+
+function splitSecondPromptSections(result: NonNullable<SecondPromptGenerationState["result"]>): SplitPromptSections {
+  const output = parseSecondPromptOutput(result);
+  const mainSource = output ? output.main_images ?? output.mainImages : null;
+  const detailSource = output ? output.detail_images ?? output.detailImages : null;
+  const mainCards = normalizePromptCards(mainSource, "main");
+  const detailCards = normalizePromptCards(detailSource, "detail");
+  return {
+    main: {
+      title: "涓诲浘鎻愮ず璇?,
+      cards: mainCards,
+      copyText: buildPromptCopyText(MAIN_IMAGE_OPENING, "涓诲浘鎻愮ず璇?, mainCards)
+    },
+    detail: {
+      title: "璇︽儏椤垫彁绀鸿瘝",
+      cards: detailCards,
+      copyText: buildPromptCopyText(DETAIL_IMAGE_OPENING, "璇︽儏椤垫彁绀鸿瘝", detailCards)
+    }
+  };
+}
+
+function buildVideoPromptDraftKey(recordId: string, setKey: string, clipIndex: number, field: string) {
+  return `${recordId}::${setKey}::${clipIndex}::${field}`;
+}
+
+type ClipVideoGenerationStatus = "idle" | "queued" | "processing" | "succeeded" | "failed";
+
+type ClipVideoGenerationState = {
+  firstFrameDataUrl: string;
+  firstFrameName: string;
+  lastFrameDataUrl: string;
+  lastFrameName: string;
+  uploadedImageDataUrls: string[];
+  uploadedImageNames: string[];
+  status: ClipVideoGenerationStatus;
+  taskId: string;
+  videoUrl: string;
+  error: string;
+  updatedAt: string | null;
+};
+
+const DEFAULT_CLIP_VIDEO_GENERATION_STATE: ClipVideoGenerationState = {
+  firstFrameDataUrl: "",
+  firstFrameName: "",
+  lastFrameDataUrl: "",
+  lastFrameName: "",
+  uploadedImageDataUrls: [],
+  uploadedImageNames: [],
+  status: "idle",
+  taskId: "",
+  videoUrl: "",
+  error: "",
+  updatedAt: null
+};
+
+function isSameStringArray(left: string[], right: string[]) {
+  if (left.length !== right.length) {
+    return false;
+  }
+  return left.every((value, index) => value === right[index]);
+}
+
+function getClipVideoStatusText(status: ClipVideoGenerationStatus) {
+  if (status === "queued") {
+    return "浠诲姟鎺掗槦涓?;
+  }
+  if (status === "processing") {
+    return "瑙嗛鐢熸垚涓?;
+  }
+  if (status === "succeeded") {
+    return "鐢熸垚鎴愬姛";
+  }
+  if (status === "failed") {
+    return "鐢熸垚澶辫触";
+  }
+  return "鏈彂璧疯姹?;
+}
+
+function buildClipVideoStateKey(recordId: string, setKey: string, clipIndex: number) {
+  return `${recordId}::${setKey}::${clipIndex}`;
+}
+
+function readFileAsDataUrl(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = typeof reader.result === "string" ? reader.result : "";
+      if (!result) {
+        reject(new Error("鏂囦欢璇诲彇缁撴灉涓虹┖銆?));
+        return;
+      }
+      resolve(result);
+    };
+    reader.onerror = () => {
+      reject(new Error("鏂囦欢璇诲彇澶辫触銆?));
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+async function copyText(value: string) {
+  const text = safeText(value);
+  if (!text) {
+    return false;
+  }
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch (_error) {
+      // fallback to textarea copy.
+    }
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "readonly");
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  textarea.style.pointerEvents = "none";
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+  let ok = false;
+  try {
+    ok = document.execCommand("copy");
+  } catch (_error) {
+    ok = false;
+  }
+  document.body.removeChild(textarea);
+  return ok;
+}
+
+function ProductDetailsPanel(props: { item: ProductRecord | null }) {
+  const { item } = props;
+  if (!item) {
+    return (
+      <aside className="details-panel">
+        <h3>鍟嗗搧璇︽儏</h3>
+        <p className="details-empty">鐐瑰嚮宸︿晶鍟嗗搧鍗＄墖鏌ョ湅璇︽儏銆?/p>
+      </aside>
+    );
+  }
+
+  const priceText =
+    item.priceMax !== null && item.priceMax !== item.priceMin
+      ? `${toCurrency(item.priceMin)} - ${toCurrency(item.priceMax)}`
+      : toCurrency(item.priceMin);
+  const hasSourceLink = isHttpUrl(item.url);
+  const sourceLinkLabel = item.source === "chrome-extension" ? "鎵撳紑 1688 鍘熷閾炬帴" : "鎵撳紑鍟嗗搧閾炬帴";
+
+  return (
+    <aside className="details-panel">
+      <h3>鍟嗗搧璇︽儏</h3>
+      <div className="details-image-wrap">
+        {item.triggeredImage ? <img src={item.triggeredImage} alt={item.title} /> : <div className="image-fallback">No Image</div>}
+      </div>
+
+      <div className="details-title">{item.title}</div>
+
+      <div className="details-row">
+        <span>鍟嗗搧ID</span>
+        <span>{item.productId}</span>
+      </div>
+      <div className="details-row">
+        <span>搴楅摵</span>
+        <span>{item.shopName}</span>
+      </div>
+      <div className="details-row">
+        <span>浠锋牸鍖洪棿</span>
+        <span>{priceText}</span>
+      </div>
+      <div className="details-row">
+        <span>鎶撳彇鏃堕棿</span>
+        <span>{toDate(item.capturedAt)}</span>
+      </div>
+
+      <div className="details-block">
+        <div className="details-subtitle">浠锋牸闃舵</div>
+        {item.priceTiers.length ? (
+          <ul className="details-list">
+            {item.priceTiers.slice(0, 8).map((tier, index) => (
+              <li key={`${item.recordId}_tier_${index}`}>
+                {tier.quantityLabel}: {tier.unitPriceText || toCurrency(tier.unitPrice)}
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="details-muted">鏆傛棤浠锋牸闃舵</p>
+        )}
+      </div>
+
+      <div className="details-block">
+        <div className="details-subtitle">瑙勬牸缁村害</div>
+        {item.skuDimensions.length ? (
+          <ul className="details-list">
+            {item.skuDimensions.slice(0, 10).map((dimension, index) => (
+              <li key={`${item.recordId}_dim_${index}`}>
+                {dimension.name}: {dimension.options.slice(0, 8).join(", ") || "-"}
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="details-muted">鏆傛棤瑙勬牸缁村害</p>
+        )}
+      </div>
+
+      <div className="details-block">
+        <div className="details-subtitle">SKU鏄庣粏</div>
+        {item.skuItems.length ? (
+          <ul className="details-list">
+            {item.skuItems.slice(0, 12).map((sku, index) => (
+              <li key={`${item.recordId}_sku_${index}`}>
+                {sku.attrs.join(" / ") || "N/A"} | 浠锋牸: {toCurrency(sku.price)} | 搴撳瓨: {sku.stock ?? sku.stockText ?? "N/A"}
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="details-muted">鏆傛棤 SKU 鏄庣粏</p>
+        )}
+      </div>
+
+      <div className="details-block">
+        <div className="details-subtitle">鍟嗗搧灞炴€?/div>
+        {item.productAttributes?.length ? (
+          <ul className="details-list">
+            {item.productAttributes.slice(0, 20).map((attr, index) => (
+              <li key={`${item.recordId}_attr_${index}`}>
+                {attr.name}: {attr.value}
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="details-muted">鏆傛棤鍟嗗搧灞炴€?/p>
+        )}
+      </div>
+
+      <div className="details-block">
+        <div className="details-subtitle">鍖呰淇℃伅</div>
+        {item.packageSpecs?.length ? (
+          <ul className="details-list">
+            {item.packageSpecs.slice(0, 20).map((line, index) => (
+              <li key={`${item.recordId}_pkg_${index}`}>{line}</li>
+            ))}
+          </ul>
+        ) : (
+          <p className="details-muted">鏆傛棤鍖呰淇℃伅</p>
+        )}
+      </div>
+
+      {hasSourceLink ? (
+        <a className="source-link" href={item.url} rel="noreferrer" target="_blank">
+          {sourceLinkLabel}
+        </a>
+      ) : (
+        <p className="details-muted">鏆傛棤鍙闂殑鍟嗗搧閾炬帴</p>
+      )}
+    </aside>
+  );
+}
+
+function AIResultsPage(props: {
+  items: ProductRecord[];
+  onAnalyze: (recordId: string) => Promise<void>;
+  onGenerateSecondPrompt: (recordId: string) => Promise<void>;
+  onGenerateVideoScript: (recordId: string, options?: VideoScriptRequestOptions) => Promise<void>;
+  videoProductInfoOverrides: Record<string, string>;
+  onChangeVideoProductInfo: (recordId: string, value: string) => void;
+  onOpenProduct: (recordId: string) => void;
+}) {
+  const {
+    items,
+    onAnalyze,
+    onGenerateSecondPrompt,
+    onGenerateVideoScript,
+    videoProductInfoOverrides,
+    onChangeVideoProductInfo,
+    onOpenProduct
+  } = props;
+  const [modalRecordId, setModalRecordId] = useState<string | null>(null);
+  const [copyTip, setCopyTip] = useState("");
+  const [videoPromptDrafts, setVideoPromptDrafts] = useState<Record<string, string>>({});
+  const [clipVideoStates, setClipVideoStates] = useState<Record<string, ClipVideoGenerationState>>({});
+  const copyTipTimerRef = useRef<number | null>(null);
+
+  const rows = items
+    .map((item) => ({
+      item,
+      analysis: normalizeAnalysisState(item.analysis),
+      videoScript: normalizeVideoScriptState(item.videoScriptGeneration),
+      secondPrompt: normalizeSecondPromptState(item.secondPromptGeneration),
+      videoClipGeneration: normalizeVideoClipGenerationState(item.videoClipGeneration)
+    }))
+    .filter(({ analysis }) => analysis.status !== "idle")
+    .sort((a, b) => {
+      const aTime = new Date(a.analysis.updatedAt || a.item.capturedAt || 0).getTime();
+      const bTime = new Date(b.analysis.updatedAt || b.item.capturedAt || 0).getTime();
+      return bTime - aTime;
+    });
+
+  useEffect(() => {
+    if (modalRecordId && !rows.some((row) => row.item.recordId === modalRecordId)) {
+      setModalRecordId(null);
+    }
+  }, [rows, modalRecordId]);
+
+  useEffect(() => {
+    if (!modalRecordId) {
+      return;
+    }
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setModalRecordId(null);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [modalRecordId]);
+
+  useEffect(() => {
+    return () => {
+      if (copyTipTimerRef.current !== null) {
+        window.clearTimeout(copyTipTimerRef.current);
+      }
+    };
+  }, []);
+
+  if (!rows.length) {
+    return (
+      <section className="ai-page-empty">
+        <h2>鏆傛棤 AI 鍒嗘瀽缁撴灉</h2>
+        <p>鍏堝湪鍟嗗搧搴撲腑鐐瑰嚮鈥淎I鍒嗘瀽鈥濓紝瀹屾垚鍚庝細闆嗕腑灞曠ず鍦ㄨ繖閲屻€?/p>
+      </section>
+    );
+  }
+
+  const modalRow = modalRecordId ? rows.find((row) => row.item.recordId === modalRecordId) ?? null : null;
+  const modalItem = modalRow?.item ?? null;
+  const modalAnalysis = modalRow?.analysis ?? null;
+  const modalVideoScript = modalRow?.videoScript ?? null;
+  const modalSecondPrompt = modalRow?.secondPrompt ?? null;
+  const modalVideoClipGeneration = modalRow?.videoClipGeneration ?? DEFAULT_VIDEO_CLIP_GENERATION_STATE;
+  const modalResult = modalAnalysis?.result ?? null;
+  const modalAnalyzing = modalAnalysis ? modalAnalysis.status === "queued" || modalAnalysis.status === "processing" : false;
+  const modalVideoGenerating = modalVideoScript ? modalVideoScript.status === "processing" : false;
+  const modalPromptGenerating = modalSecondPrompt ? modalSecondPrompt.status === "processing" : false;
+  const modalSecondPromptResult = modalSecondPrompt?.result ?? null;
+  const modalVideoScriptResponseSource =
+    modalVideoScript?.result?.outputPayload?.raw ?? modalVideoScript?.result?.outputPayload ?? null;
+  const modalVideoScriptResponseText = useMemo(() => toPrettyJson(modalVideoScriptResponseSource), [modalVideoScriptResponseSource]);
+  const modalVideoScriptRequestSource = modalVideoScript?.result?.modelRequest ?? null;
+  const modalVideoScriptRequestText = useMemo(() => toPrettyJson(modalVideoScriptRequestSource), [modalVideoScriptRequestSource]);
+  const modalVideoScriptSystemPromptText = useMemo(() => {
+    const requestBody = modalVideoScriptRequestSource?.requestBody;
+    if (!requestBody || typeof requestBody !== "object") {
+      return "";
+    }
+    const messages = Array.isArray((requestBody as Record<string, unknown>).messages)
+      ? ((requestBody as Record<string, unknown>).messages as unknown[])
+      : [];
+    for (const item of messages) {
+      if (!item || typeof item !== "object") {
+        continue;
+      }
+      const message = item as Record<string, unknown>;
+      if (safeText(message.role) !== "system") {
+        continue;
+      }
+      return safeText(message.content);
+    }
+    return "";
+  }, [modalVideoScriptRequestSource]);
+  const modalVideoScriptUserPayloadText = useMemo(() => {
+    const requestBody = modalVideoScriptRequestSource?.requestBody;
+    if (!requestBody || typeof requestBody !== "object") {
+      return "";
+    }
+    const messages = Array.isArray((requestBody as Record<string, unknown>).messages)
+      ? ((requestBody as Record<string, unknown>).messages as unknown[])
+      : [];
+    let userContent = "";
+    for (const item of messages) {
+      if (!item || typeof item !== "object") {
+        continue;
+      }
+      const message = item as Record<string, unknown>;
+      if (safeText(message.role) !== "user") {
+        continue;
+      }
+      userContent = safeText(message.content);
+      break;
+    }
+    if (!userContent) {
+      return "";
+    }
+    try {
+      return toPrettyJson(JSON.parse(userContent));
+    } catch (_error) {
+      return userContent;
+    }
+  }, [modalVideoScriptRequestSource]);
+  const modalVideoScriptModelText = useMemo(() => {
+    if (!modalVideoScriptResponseSource || typeof modalVideoScriptResponseSource !== "object") {
+      return "";
+    }
+    const source = modalVideoScriptResponseSource as Record<string, unknown>;
+    return safeText(source.raw_model_text ?? source.rawModelText);
+  }, [modalVideoScriptResponseSource]);
+  const modalVideoScriptOutputProductInfo = modalVideoScript?.result?.outputPayload?.product_info ?? null;
+  const modalAnalysisReferenceText = useMemo(() => buildAnalysisReferenceText(modalResult), [modalResult]);
+  const modalVideoProductInfoFallbackText = useMemo(
+    () => toEditableProductInfoText(modalVideoScriptOutputProductInfo),
+    [modalVideoScriptOutputProductInfo]
+  );
+  const modalVideoProductInfoDefaultText = safeText(modalVideoProductInfoFallbackText, modalAnalysisReferenceText);
+  const modalVideoProductInfoText = modalItem
+    ? typeof videoProductInfoOverrides[modalItem.recordId] === "string"
+      ? videoProductInfoOverrides[modalItem.recordId]
+      : modalVideoProductInfoDefaultText
+    : "";
+  const modalHasCustomProductInfo = modalItem ? safeText(videoProductInfoOverrides[modalItem.recordId]).length > 0 : false;
+  const modalRunningClipTasks = modalVideoClipGeneration.items.filter((entry) => entry.status === "queued" || entry.status === "processing").length;
+  const modalFailedClipTasks = modalVideoClipGeneration.items.filter((entry) => entry.status === "failed").length;
+  const modalSucceededClipTasks = modalVideoClipGeneration.items.filter((entry) => entry.status === "succeeded").length;
+  const modalPromptSections = useMemo(
+    () => (modalSecondPromptResult ? splitSecondPromptSections(modalSecondPromptResult) : null),
+    [modalSecondPromptResult]
+  );
+
+  const showCopyTip = useCallback((text: string) => {
+    setCopyTip(text);
+    if (copyTipTimerRef.current !== null) {
+      window.clearTimeout(copyTipTimerRef.current);
+    }
+    copyTipTimerRef.current = window.setTimeout(() => {
+      setCopyTip("");
+      copyTipTimerRef.current = null;
+    }, 2800);
+  }, []);
+
+  const handleCopyAndMaybeOpenPrompt = useCallback(
+    async (text: string, openPlatform: boolean) => {
+      const ok = await copyText(text);
+      if (openPlatform) {
+        const opened = window.open(GENSPARK_IMAGE_URL, "_blank", "noopener,noreferrer");
+        if (!opened) {
+          showCopyTip("娴忚鍣ㄦ嫤鎴簡鏂扮獥鍙ｏ紝璇峰厑璁稿脊绐楀悗閲嶈瘯銆?);
+          return;
+        }
+      }
+      if (ok) {
+        showCopyTip(openPlatform ? "宸插鍒跺苟璺宠浆鐢熷浘椤碉紝鍙洿鎺ョ矘璐翠娇鐢ㄣ€? : "鎻愮ず璇嶅凡澶嶅埗锛屽彲鐩存帴绮樿创浣跨敤銆?);
+      } else {
+        showCopyTip("鑷姩澶嶅埗澶辫触锛岃鎵嬪姩澶嶅埗鏂囨湰妗嗗唴瀹广€?);
+      }
+    },
+    [showCopyTip]
+  );
+
+  const handleCopyPromptSection = useCallback(
+    async (text: string, openPlatform: boolean) => {
+      await handleCopyAndMaybeOpenPrompt(text, openPlatform);
+    },
+    [handleCopyAndMaybeOpenPrompt]
+  );
+
+  const getVideoPromptValue = useCallback(
+    (recordId: string, setKey: string, clipIndex: number, field: string, fallback: string) => {
+      const key = buildVideoPromptDraftKey(recordId, setKey, clipIndex, field);
+      const cached = videoPromptDrafts[key];
+      return typeof cached === "string" ? cached : fallback;
+    },
+    [videoPromptDrafts]
+  );
+
+  const handleVideoPromptChange = useCallback((recordId: string, setKey: string, clipIndex: number, field: string, value: string) => {
+    const key = buildVideoPromptDraftKey(recordId, setKey, clipIndex, field);
+    setVideoPromptDrafts((prev) => ({
+      ...prev,
+      [key]: value
+    }));
+  }, []);
+
+  const getPersistedClipTask = useCallback(
+    (recordId: string, setKey: string, clipIndex: number) => {
+      const row = rows.find((entry) => entry.item.recordId === recordId);
+      if (!row) {
+        return null;
+      }
+      const key = buildClipVideoStateKey(recordId, setKey, clipIndex);
+      return row.videoClipGeneration.items.find((item) => item.key === key) || null;
+    },
+    [rows]
+  );
+
+  useEffect(() => {
+    setClipVideoStates((prev) => {
+      const next = { ...prev };
+      let changed = false;
+      rows.forEach((row) => {
+        row.videoClipGeneration.items.forEach((task) => {
+          const key = buildClipVideoStateKey(row.item.recordId, task.setKey, task.clipIndex);
+          const current = next[key] ?? DEFAULT_CLIP_VIDEO_GENERATION_STATE;
+          const uploadedImageDataUrls =
+            current.uploadedImageDataUrls.length > 0
+              ? current.uploadedImageDataUrls
+              : task.clipIndex === 1 && task.firstFrameUrl
+                ? [task.firstFrameUrl]
+                : [];
+          const uploadedImageNames =
+            current.uploadedImageNames.length > 0
+              ? current.uploadedImageNames
+              : task.clipIndex === 1 && task.firstFrameName
+                ? [task.firstFrameName]
+                : [];
+          const merged: ClipVideoGenerationState = {
+            ...current,
+            status: task.status,
+            taskId: task.taskId || "",
+            videoUrl: task.videoUrl || "",
+            error: task.error || "",
+            firstFrameName: task.firstFrameName || current.firstFrameName,
+            lastFrameName: task.lastFrameName || current.lastFrameName,
+            firstFrameDataUrl: task.firstFrameUrl || current.firstFrameDataUrl,
+            lastFrameDataUrl: task.lastFrameUrl || current.lastFrameDataUrl,
+            uploadedImageDataUrls,
+            uploadedImageNames,
+            updatedAt: task.updatedAt || current.updatedAt
+          };
+          const same =
+            current.status === merged.status &&
+            current.taskId === merged.taskId &&
+            current.videoUrl === merged.videoUrl &&
+            current.error === merged.error &&
+            current.firstFrameName === merged.firstFrameName &&
+            current.lastFrameName === merged.lastFrameName &&
+            current.firstFrameDataUrl === merged.firstFrameDataUrl &&
+            current.lastFrameDataUrl === merged.lastFrameDataUrl &&
+            isSameStringArray(current.uploadedImageDataUrls, merged.uploadedImageDataUrls) &&
+            isSameStringArray(current.uploadedImageNames, merged.uploadedImageNames) &&
+            current.updatedAt === merged.updatedAt;
+          if (!same) {
+            next[key] = merged;
+            changed = true;
+          }
+        });
+      });
+      return changed ? next : prev;
+    });
+  }, [rows]);
+
+  const getClipVideoState = useCallback(
+    (recordId: string, setKey: string, clipIndex: number) => {
+      const key = buildClipVideoStateKey(recordId, setKey, clipIndex);
+      const localState = clipVideoStates[key];
+      const persistedTask = getPersistedClipTask(recordId, setKey, clipIndex);
+      const persistedState: ClipVideoGenerationState | null = persistedTask
+        ? {
+            firstFrameDataUrl: persistedTask.firstFrameUrl || "",
+            firstFrameName: persistedTask.firstFrameName || "",
+            lastFrameDataUrl: persistedTask.lastFrameUrl || "",
+            lastFrameName: persistedTask.lastFrameName || "",
+            uploadedImageDataUrls: persistedTask.clipIndex === 1 && persistedTask.firstFrameUrl ? [persistedTask.firstFrameUrl] : [],
+            uploadedImageNames: persistedTask.clipIndex === 1 && persistedTask.firstFrameName ? [persistedTask.firstFrameName] : [],
+            status: persistedTask.status,
+            taskId: persistedTask.taskId || "",
+            videoUrl: persistedTask.videoUrl || "",
+            error: persistedTask.error || "",
+            updatedAt: persistedTask.updatedAt || null
+          }
+        : null;
+      return {
+        ...DEFAULT_CLIP_VIDEO_GENERATION_STATE,
+        ...(persistedState || {}),
+        ...(localState || {})
+      };
+    },
+    [clipVideoStates, getPersistedClipTask]
+  );
+
+  const patchClipVideoState = useCallback(
+    (recordId: string, setKey: string, clipIndex: number, patch: Partial<ClipVideoGenerationState>) => {
+      const key = buildClipVideoStateKey(recordId, setKey, clipIndex);
+      setClipVideoStates((prev) => {
+        const base = prev[key] ?? DEFAULT_CLIP_VIDEO_GENERATION_STATE;
+        return {
+          ...prev,
+          [key]: {
+            ...base,
+            ...patch,
+            updatedAt: new Date().toISOString()
+          }
+        };
+      });
+    },
+    []
+  );
+
+  const handleClipFrameFileChange = useCallback(
+    async (recordId: string, setKey: string, clipIndex: number, frame: "first" | "last", file: File | null) => {
+      if (!file) {
+        if (frame === "first") {
+          patchClipVideoState(recordId, setKey, clipIndex, {
+            firstFrameDataUrl: "",
+            firstFrameName: "",
+            error: ""
+          });
+        } else {
+          patchClipVideoState(recordId, setKey, clipIndex, {
+            lastFrameDataUrl: "",
+            lastFrameName: "",
+            error: ""
+          });
+        }
+        return;
+      }
+      try {
+        const dataUrl = await readFileAsDataUrl(file);
+        if (frame === "first") {
+          patchClipVideoState(recordId, setKey, clipIndex, {
+            firstFrameDataUrl: dataUrl,
+            firstFrameName: file.name,
+            error: ""
+          });
+        } else {
+          patchClipVideoState(recordId, setKey, clipIndex, {
+            lastFrameDataUrl: dataUrl,
+            lastFrameName: file.name,
+            error: ""
+          });
+        }
+      } catch (error) {
+        patchClipVideoState(recordId, setKey, clipIndex, {
+          status: "failed",
+          error: error instanceof Error ? error.message : "鍥剧墖璇诲彇澶辫触锛岃閲嶈瘯銆?
+        });
+      }
+    },
+    [patchClipVideoState]
+  );
+
+  const handleClipReferenceImagesChange = useCallback(
+    async (recordId: string, setKey: string, clipIndex: number, files: FileList | null) => {
+      if (!files || files.length < 1) {
+        patchClipVideoState(recordId, setKey, clipIndex, {
+          uploadedImageDataUrls: [],
+          uploadedImageNames: [],
+          error: ""
+        });
+        return;
+      }
+      const selectedFiles = Array.from(files).slice(0, 8);
+      try {
+        const dataUrls = await Promise.all(selectedFiles.map((file) => readFileAsDataUrl(file)));
+        patchClipVideoState(recordId, setKey, clipIndex, {
+          uploadedImageDataUrls: dataUrls,
+          uploadedImageNames: selectedFiles.map((file) => file.name),
+          error: ""
+        });
+      } catch (error) {
+        patchClipVideoState(recordId, setKey, clipIndex, {
+          status: "failed",
+          error: error instanceof Error ? error.message : "鍥剧墖璇诲彇澶辫触锛岃閲嶈瘯銆?
+        });
+      }
+    },
+    [patchClipVideoState]
+  );
+
+  const handleGenerateClipVideo = useCallback(
+    async (
+      recordId: string,
+      setKey: string,
+      clipIndex: number,
+      prompt: string,
+      firstFrameDataUrl: string,
+      lastFrameDataUrl: string,
+      uploadedImageDataUrls: string[] = []
+    ) => {
+      const normalizedPrompt = safeText(prompt);
+      if (!normalizedPrompt) {
+        patchClipVideoState(recordId, setKey, clipIndex, {
+          status: "failed",
+          error: "鍒嗛暅淇℃伅涓虹┖锛屾棤娉曞彂璧疯棰戠敓鎴愩€?
+        });
+        return;
+      }
+
+      patchClipVideoState(recordId, setKey, clipIndex, {
+        status: "queued",
+        error: "",
+        videoUrl: "",
+        taskId: ""
+      });
+
+      let json: GenerateClipVideoResponse | null = null;
+      try {
+        const normalizedFirstFrameUrl = safeText(firstFrameDataUrl);
+        const normalizedLastFrameUrl = safeText(lastFrameDataUrl);
+        const normalizedUploadedUrls = Array.from(new Set(uploadedImageDataUrls.map((item) => safeText(item)).filter(Boolean))).slice(0, 8);
+        let requestFirstFrameUrl = normalizedFirstFrameUrl;
+        let requestLastFrameUrl = normalizedLastFrameUrl;
+        let requestUrls: string[] = [];
+        if (clipIndex === 0) {
+          requestLastFrameUrl = "";
+          requestUrls = [];
+        } else if (clipIndex === 1) {
+          requestFirstFrameUrl = "";
+          requestLastFrameUrl = "";
+          requestUrls = normalizedUploadedUrls.length > 0 ? normalizedUploadedUrls : normalizedFirstFrameUrl ? [normalizedFirstFrameUrl] : [];
+        }
+        const response = await apiFetch(`/api/products/${encodeURIComponent(recordId)}/video-clips/generate`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            setKey,
+            clipIndex,
+            prompt: normalizedPrompt,
+            firstFrameUrl: requestFirstFrameUrl,
+            lastFrameUrl: requestLastFrameUrl,
+            urls: requestUrls,
+            firstFrameName: getClipVideoState(recordId, setKey, clipIndex).firstFrameName,
+            lastFrameName: getClipVideoState(recordId, setKey, clipIndex).lastFrameName,
+            aspectRatio: "9:16",
+            pollIntervalMs: 5000,
+            pollTimeoutMs: 600000,
+            createTimeoutMs: 60000,
+            resultTimeoutMs: 30000
+          })
+        });
+        try {
+          json = (await response.json()) as GenerateClipVideoResponse;
+        } catch (_error) {
+          json = null;
+        }
+        if (!response.ok || !json?.ok) {
+          const detail = safeText(json?.message) || `璇锋眰澶辫触: ${response.status}`;
+          patchClipVideoState(recordId, setKey, clipIndex, {
+            status: "failed",
+            error: detail,
+            taskId: safeText(json?.task?.taskId || "")
+          });
+          return;
+        }
+        patchClipVideoState(recordId, setKey, clipIndex, {
+          status: json.task?.status === "processing" ? "processing" : "queued",
+          error: "",
+          taskId: safeText(json.task?.taskId || "")
+        });
+      } catch (error) {
+        patchClipVideoState(recordId, setKey, clipIndex, {
+          status: "failed",
+          error: normalizeRequestErrorMessage(error, "瑙嗛鐢熸垚璇锋眰澶辫触锛岃绋嶅悗閲嶈瘯銆?),
+          taskId: safeText(json?.task?.taskId || "")
+        });
+      }
+    },
+    [getClipVideoState, patchClipVideoState]
+  );
+
+  const handleGenerateSetVideos = useCallback(
+    async (
+      recordId: string,
+      setKey: string,
+      clips: Array<{
+        sceneDescription: string;
+        marketingPurpose: string;
+        videoAudioPrompt: string;
+      }>
+    ) => {
+      const jobs = clips
+        .map((clip, clipIndex) => {
+          const promptField = clipIndex === 1 ? "segment_b_prompt" : "segment_a_prompt";
+          const fallbackPrompt =
+            clipIndex === 1 ? safeText(clip.marketingPurpose) : safeText(clip.sceneDescription) || buildVideoClipInfoBundle(clip.sceneDescription, clip.marketingPurpose, clip.videoAudioPrompt);
+          const prompt = getVideoPromptValue(recordId, setKey, -1, promptField, fallbackPrompt);
+          const state = getClipVideoState(recordId, setKey, clipIndex);
+          if (!safeText(prompt)) {
+            return null;
+          }
+          return handleGenerateClipVideo(
+            recordId,
+            setKey,
+            clipIndex,
+            prompt,
+            state.firstFrameDataUrl,
+            state.lastFrameDataUrl,
+            state.uploadedImageDataUrls
+          );
+        })
+        .filter(Boolean) as Array<Promise<void>>;
+      if (!jobs.length) {
+        return;
+      }
+      await Promise.allSettled(jobs);
+    },
+    [getClipVideoState, getVideoPromptValue, handleGenerateClipVideo]
+  );
+
+  const handleCopyVideoPrompt = useCallback(
+    async (text: string, openPlatform: boolean) => {
+      await handleCopyAndMaybeOpenPrompt(text, openPlatform);
+    },
+    [handleCopyAndMaybeOpenPrompt]
+  );
+
+  const handleOpenGensparkWindow = useCallback(() => {
+    const opened = window.open(GENSPARK_IMAGE_URL, "_blank", "noopener,noreferrer");
+    if (!opened) {
+      showCopyTip("娴忚鍣ㄦ嫤鎴簡鏂扮獥鍙ｏ紝璇峰厑璁稿脊绐楀悗閲嶈瘯銆?);
+    }
+  }, [showCopyTip]);
+
+  return (
+    <>
+      <section className="ai-page-grid">
+        {rows.map(({ item, analysis, videoScript, secondPrompt, videoClipGeneration }) => {
+          const result = analysis.result;
+          const analyzing = analysis.status === "queued" || analysis.status === "processing";
+          const videoGenerating = videoScript.status === "processing";
+          const promptGenerating = secondPrompt.status === "processing";
+          const runningClipTasks = videoClipGeneration.items.filter((entry) => entry.status === "queued" || entry.status === "processing").length;
+          const failedClipTasks = videoClipGeneration.items.filter((entry) => entry.status === "failed").length;
+          const succeededClipTasks = videoClipGeneration.items.filter((entry) => entry.status === "succeeded").length;
+          const canRunSecondPrompt = analysis.status === "completed";
+          const canRunVideoScript = analysis.status === "completed";
+          const secondPromptReady = secondPrompt.status === "completed" && secondPrompt.result;
+          return (
+            <article
+              className={`ai-page-card compact-card ${modalRecordId === item.recordId ? "opened" : ""}`}
+              key={item.recordId}
+              onClick={() => setModalRecordId(item.recordId)}
+            >
+              <div className="ai-page-head">
+                {item.triggeredImage ? <img src={item.triggeredImage} alt={item.title} /> : <div className="image-fallback">No Image</div>}
+                <div>
+                  <div className="ai-page-title">{item.title}</div>
+                  <div className="ai-page-meta">搴楅摵: {item.shopName}</div>
+                  <div className={`analysis-chip status-${analysis.status}`}>AI: {analysisStatusLabel(analysis.status)}</div>
+                  {VIDEO_SCRIPT_AGENT_ENABLED ? (
+                    <div className={`prompt-chip status-${videoScript.status}`}>鐭棰? {videoScriptStatusLabel(videoScript.status)}</div>
+                  ) : null}
+                  <div className={`prompt-chip status-${runningClipTasks ? "processing" : failedClipTasks ? "failed" : succeededClipTasks ? "completed" : "idle"}`}>
+                    鍒嗛暅瑙嗛: {runningClipTasks ? `鍚庡彴鎵ц涓?${runningClipTasks}` : failedClipTasks ? `澶辫触 ${failedClipTasks}` : succeededClipTasks ? `瀹屾垚 ${succeededClipTasks}` : "鏈紑濮?}
+                  </div>
+                  <div className={`prompt-chip status-${secondPrompt.status}`}>鍥捐瘝: {secondPromptStatusLabel(secondPrompt.status)}</div>
+                  <div className="analysis-time">鏇存柊鏃堕棿: {toDate(analysis.updatedAt)}</div>
+                </div>
+              </div>
+
+              {analysis.status === "failed" ? <div className="analysis-error">鍒嗘瀽澶辫触: {analysis.error || "鏈煡閿欒"}</div> : null}
+              {VIDEO_SCRIPT_AGENT_ENABLED && videoScript.status === "failed" ? (
+                <div className="analysis-error">鐭棰戞彁绀鸿瘝澶辫触: {videoScript.error || "鏈煡閿欒"}</div>
+              ) : null}
+              {secondPrompt.status === "failed" ? <div className="analysis-error">鍥捐瘝璇锋眰澶辫触: {secondPrompt.error || "鏈煡閿欒"}</div> : null}
+              {analysis.status === "completed" && result ? (
+                <div className="ai-page-snippet compact-snippet">
+                  <div>
+                    <strong>鏉愯川:</strong> {result.materialAnalysis || "鏃?}
+                  </div>
+                  <div>
+                    <strong>澶栬:</strong> {result.appearanceDescription || "鏃?}
+                  </div>
+                  <div>
+                    <strong>璇︽儏鎻忚堪:</strong> {result.detailedDescription || "鏃?}
+                  </div>
+                </div>
+              ) : null}
+              {secondPromptReady ? (
+                <div className="ai-page-snippet compact-snippet">
+                  <div>
+                    <strong>鍥捐瘝杈撳嚭:</strong> 宸茬敓鎴?9 寮犱富鍥?+ 5 寮犺鎯呴〉鎻愮ず璇?
+                  </div>
+                  <div>
+                    <strong>妯℃澘鐗堟湰:</strong> {secondPrompt.result?.templateVersion || "v2.1"}
+                  </div>
+                </div>
+              ) : null}
+
+              <div className="ai-page-actions">
+                <button
+                  className="ghost"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setModalRecordId(item.recordId);
+                  }}
+                  type="button"
+                >
+                  鏌ョ湅璇︽儏
+                </button>
+                <button
+                  className="primary-btn"
+                  disabled={analyzing}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    void onAnalyze(item.recordId);
+                  }}
+                  type="button"
+                >
+                  {analyzing ? "鍒嗘瀽涓?.." : analysis.status === "completed" ? "閲嶆柊鍒嗘瀽" : "寮€濮嬪垎鏋?}
+                </button>
+                {VIDEO_SCRIPT_AGENT_ENABLED ? (
+                  <button
+                    className="ghost"
+                    disabled={!canRunVideoScript || videoGenerating}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      void onGenerateVideoScript(item.recordId);
+                    }}
+                    type="button"
+                  >
+                    {!canRunVideoScript
+                      ? "鍏堝畬鎴愬垎鏋?
+                      : videoGenerating
+                        ? "鐭棰戠敓鎴愪腑..."
+                        : videoScript.status === "completed"
+                          ? "閲嶈窇鐭棰戞彁绀鸿瘝"
+                          : "鐭棰戞彁绀鸿瘝"}
+                  </button>
+                ) : null}
+                <button
+                  className="ghost"
+                  disabled={!canRunSecondPrompt || promptGenerating}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    void onGenerateSecondPrompt(item.recordId);
+                  }}
+                  type="button"
+                >
+                  {!canRunSecondPrompt ? "鍏堝畬鎴愬垎鏋? : promptGenerating ? "鍥捐瘝鐢熸垚涓?.." : secondPrompt.status === "completed" ? "閲嶈窇鍥捐瘝璇锋眰" : "鍥捐瘝璇锋眰"}
+                </button>
+              </div>
+            </article>
+          );
+        })}
+      </section>
+
+      {modalItem && modalAnalysis ? (
+        <div className="ai-modal-backdrop" onClick={() => setModalRecordId(null)}>
+          <section aria-modal="true" className="ai-modal" onClick={(event) => event.stopPropagation()} role="dialog">
+            <div className="ai-modal-header">
+              <div className="ai-inspector-head">
+                {modalItem.triggeredImage ? <img src={modalItem.triggeredImage} alt={modalItem.title} /> : <div className="image-fallback">No Image</div>}
+                <div>
+                  <div className="ai-page-title">{modalItem.title}</div>
+                  <div className="ai-page-meta">搴楅摵: {modalItem.shopName}</div>
+                  <div className={`analysis-chip status-${modalAnalysis.status}`}>AI: {analysisStatusLabel(modalAnalysis.status)}</div>
+                  {VIDEO_SCRIPT_AGENT_ENABLED && modalVideoScript ? (
+                    <div className={`prompt-chip status-${modalVideoScript.status}`}>鐭棰? {videoScriptStatusLabel(modalVideoScript.status)}</div>
+                  ) : null}
+                  <div
+                    className={`prompt-chip status-${modalRunningClipTasks ? "processing" : modalFailedClipTasks ? "failed" : modalSucceededClipTasks ? "completed" : "idle"}`}
+                  >
+                    鍒嗛暅瑙嗛: {modalRunningClipTasks ? `鍚庡彴鎵ц涓?${modalRunningClipTasks}` : modalFailedClipTasks ? `澶辫触 ${modalFailedClipTasks}` : modalSucceededClipTasks ? `瀹屾垚 ${modalSucceededClipTasks}` : "鏈紑濮?}
+                  </div>
+                  {modalSecondPrompt ? (
+                    <div className={`prompt-chip status-${modalSecondPrompt.status}`}>鍥捐瘝: {secondPromptStatusLabel(modalSecondPrompt.status)}</div>
+                  ) : null}
+                  <div className="analysis-time">鏇存柊鏃堕棿: {toDate(modalAnalysis.updatedAt)}</div>
+                </div>
+              </div>
+              <button className="ghost close-btn" onClick={() => setModalRecordId(null)} type="button">
+                鍏抽棴
+              </button>
+            </div>
+
+            <div className="ai-modal-body">
+              {modalAnalysis.status === "failed" ? <div className="analysis-error">鍒嗘瀽澶辫触: {modalAnalysis.error || "鏈煡閿欒"}</div> : null}
+              {modalAnalyzing ? <div className="analysis-loading">AI 姝ｅ湪鍒嗘瀽锛岃绋嶅€?..</div> : null}
+              {VIDEO_SCRIPT_AGENT_ENABLED && modalVideoScript?.status === "failed" ? (
+                <div className="analysis-error">鐭棰戞彁绀鸿瘝澶辫触: {modalVideoScript.error || "鏈煡閿欒"}</div>
+              ) : null}
+              {VIDEO_SCRIPT_AGENT_ENABLED && modalVideoGenerating ? <div className="analysis-loading">鐭棰戞彁绀鸿瘝鐢熸垚涓紝璇风◢鍊?..</div> : null}
+              {modalRunningClipTasks > 0 ? (
+                <div className="analysis-loading">鍒嗛暅瑙嗛鍚庡彴鎵ц涓紙{modalRunningClipTasks} 涓换鍔★級锛屽叧闂〉闈笉浼氫腑鏂€?/div>
+              ) : null}
+              {modalSecondPrompt?.status === "failed" ? (
+                <div className="analysis-error">鍥捐瘝璇锋眰澶辫触: {modalSecondPrompt.error || "鏈煡閿欒"}</div>
+              ) : null}
+              {modalPromptGenerating ? <div className="analysis-loading">鍥捐瘝璇锋眰鐢熸垚涓紝璇风◢鍊?..</div> : null}
+
+              {modalAnalysis.status === "completed" && modalResult ? (
+                <div className="ai-page-snippet">
+                  <div>
+                    <strong>鏉愯川:</strong> {modalResult.materialAnalysis || "鏃?}
+                  </div>
+                  <div>
+                    <strong>澶栬:</strong> {modalResult.appearanceDescription || "鏃?}
+                  </div>
+                  <div>
+                    <strong>棰滆壊:</strong> {modalResult.colorAnalysis || "鏃?}
+                  </div>
+                  <div>
+                    <strong>灏哄/瑙勬牸:</strong> {modalResult.sizeAndSpecs || "鏃?}
+                  </div>
+                  <div>
+                    <strong>浣跨敤鍦烘櫙/鐩爣浜虹兢:</strong> {modalResult.usageAndTargetAudience || "鏃?}
+                  </div>
+                  <div>
+                    <strong>璇︽儏鎻忚堪:</strong> {modalResult.detailedDescription || "鏃?}
+                  </div>
+
+                  <div>
+                    <strong>鍗栫偣:</strong>
+                    {modalResult.sellingPoints.length ? (
+                      <ul className="details-list">
+                        {modalResult.sellingPoints.map((point, index) => (
+                          <li key={`${modalItem.recordId}_selling_${index}`}>{point}</li>
+                        ))}
+                      </ul>
+                    ) : (
+                      " 鏃?
+                    )}
+                  </div>
+
+                  <div>
+                    <strong>閲囪喘椋庨櫓:</strong>
+                    {modalResult.procurementRisks.length ? (
+                      <ul className="details-list">
+                        {modalResult.procurementRisks.map((risk, index) => (
+                          <li key={`${modalItem.recordId}_risk_${index}`}>{risk}</li>
+                        ))}
+                      </ul>
+                    ) : (
+                      " 鏃?
+                    )}
+                  </div>
+                </div>
+              ) : null}
+
+              {modalAnalysis.status === "completed" ? (
+                <div className="prompt-card prompt-split-card">
+                  <div className="prompt-item-title">浜у搧鍙傝€冧俊鎭紙鍙嚜瀹氫箟锛?/div>
+                  <div className="prompt-item-subtitle">
+                    {modalHasCustomProductInfo
+                      ? "宸蹭娇鐢ㄤ綘鐨勮嚜瀹氫箟鐗堟湰銆傚悗缁偣鍑烩€滅煭瑙嗛鎻愮ず璇嶁€濅細浼樺厛浣跨敤姝ゅ唴瀹广€?
+                      : "鍙湪姝や慨鏀逛骇鍝佷俊鎭紝鍚庣画鐐瑰嚮鈥滅煭瑙嗛鎻愮ず璇嶁€濆皢鎶婃鍐呭鍙戦€佺粰妯″瀷銆?}
+                  </div>
+                  <textarea
+                    className="prompt-copy-textarea"
+                    onChange={(event) => {
+                      if (!modalItem) {
+                        return;
+                      }
+                      onChangeVideoProductInfo(modalItem.recordId, event.target.value);
+                    }}
+                    placeholder="鍦ㄨ繖閲岀紪杈戜骇鍝佸弬鑰冧俊鎭?.."
+                    value={modalVideoProductInfoText}
+                  />
+                  <div className="prompt-card-actions">
+                    <button
+                      className="ghost"
+                      disabled={!modalItem}
+                      onClick={() => {
+                        if (!modalItem) {
+                          return;
+                        }
+                        onChangeVideoProductInfo(modalItem.recordId, modalVideoProductInfoDefaultText);
+                      }}
+                      type="button"
+                    >
+                      閲嶇疆涓洪粯璁ゅ弬鑰?                    </button>
+                    <button
+                      className="ghost"
+                      disabled={!safeText(modalVideoProductInfoText)}
+                      onClick={() => void handleCopyVideoPrompt(modalVideoProductInfoText, false)}
+                      type="button"
+                    >
+                      澶嶅埗鍙傝€冧俊鎭?                    </button>
+                  </div>
+                </div>
+              ) : null}
+
+              {VIDEO_SCRIPT_AGENT_ENABLED && modalVideoScript?.result ? (
+                <div className="prompt-result-panel video-script-panel">
+                  <div className="prompt-result-head">
+                    <strong>鐭棰戞彁绀鸿瘝锛圕oze 鏅鸿兘浣擄級</strong>
+                    <span>{toDate(modalVideoScript.result.generatedAt)}</span>
+                  </div>
+                  <div className="video-script-meta">
+                    <div>
+                      <strong>妯℃澘鏁伴噺:</strong> {modalVideoScript.result.scriptSets.length} 濂?
+                    </div>
+                  </div>
+                  {modalVideoScript.result.scriptSets.length ? (
+                    <div className="prompt-split-grid">
+                      {modalVideoScript.result.scriptSets.map((set) => {
+                        const raw = set.raw && typeof set.raw === "object" ? set.raw : {};
+                        const firstFramePrompt = getVideoPromptValue(
+                          modalItem.recordId,
+                          set.setKey,
+                          -1,
+                          "first_frame_prompt",
+                          safeText(raw.first_frame_prompt ?? raw.firstFramePrompt) ||
+                            set.clips[0]?.firstFramePrompt ||
+                            set.clips[0]?.imageGenerationPrompt ||
+                            ""
+                        );
+                        const segmentAPrompt = getVideoPromptValue(
+                          modalItem.recordId,
+                          set.setKey,
+                          -1,
+                          "segment_a_prompt",
+                          safeText(raw.segment_a_prompt ?? raw.segmentAPrompt) || set.clips[0]?.sceneDescription || ""
+                        );
+                        const segmentBPrompt = getVideoPromptValue(
+                          modalItem.recordId,
+                          set.setKey,
+                          -1,
+                          "segment_b_prompt",
+                          safeText(raw.segment_b_prompt ?? raw.segmentBPrompt) || set.clips[0]?.marketingPurpose || ""
+                        );
+                        const usageGuide = safeText(raw.usage_guide ?? raw.usageGuide);
+                        const segmentAState = getClipVideoState(modalItem.recordId, set.setKey, 0);
+                        const segmentBState = getClipVideoState(modalItem.recordId, set.setKey, 1);
+                        const segmentATask = getPersistedClipTask(modalItem.recordId, set.setKey, 0);
+                        const segmentBTask = getPersistedClipTask(modalItem.recordId, set.setKey, 1);
+                        const segmentAProcessing = segmentAState.status === "processing" || segmentAState.status === "queued";
+                        const segmentBProcessing = segmentBState.status === "processing" || segmentBState.status === "queued";
+                        const segmentAInputId = `segment_a_first_${modalItem.recordId}_${set.setKey}`.replace(/[^a-zA-Z0-9_-]/g, "_");
+                        const segmentBInputId = `segment_b_first_${modalItem.recordId}_${set.setKey}`.replace(/[^a-zA-Z0-9_-]/g, "_");
+                        return (
+                        <div className="prompt-card prompt-split-card" key={`${modalItem.recordId}_${set.setKey}`}>
+                          <div className="prompt-item-title">{set.scriptName || set.setKey}</div>
+                          <div className="prompt-item-subtitle">
+                            {set.videoStructure || "鏈彁渚涚粨鏋?} 路 {set.totalDuration || "鏃堕暱鏈彁渚?}
+                          </div>
+                          <div className="video-script-meta">
+                            <div>
+                              <strong>绛栫暐:</strong> {set.strategy || "鏃?}
+                            </div>
+                            <div>
+                              <strong>鐩爣浜虹兢:</strong> {set.targetAudience || "鏃?}
+                            </div>
+                            <div>
+                              <strong>鐗囨鏁伴噺:</strong> 2
+                            </div>
+                          </div>
+                          <div className="prompt-split-grid">
+                            <div className="prompt-card prompt-split-card">
+                              <div className="prompt-item-title">first_frame_prompt</div>
+                              <textarea
+                                className="prompt-copy-textarea prompt-copy-textarea-compact"
+                                value={firstFramePrompt}
+                                onChange={(event) =>
+                                  handleVideoPromptChange(
+                                    modalItem.recordId,
+                                    set.setKey,
+                                    -1,
+                                    "first_frame_prompt",
+                                    event.target.value
+                                  )
+                                }
+                              />
+                              <div className="prompt-card-actions">
+                                <button className="ghost" onClick={() => void handleCopyVideoPrompt(firstFramePrompt, false)} type="button">
+                                  澶嶅埗 first_frame_prompt
+                                </button>
+                                <button className="primary-btn" onClick={() => void handleCopyVideoPrompt(firstFramePrompt, true)} type="button">
+                                  澶嶅埗骞惰烦杞敓鍥鹃〉
+                                </button>
+                              </div>
+                            </div>
+
+                            <div className="prompt-card prompt-split-card">
+                              <div className="prompt-item-title">segment_a_prompt</div>
+                              <textarea
+                                className="prompt-copy-textarea prompt-copy-textarea-compact"
+                                value={segmentAPrompt}
+                                onChange={(event) =>
+                                  handleVideoPromptChange(
+                                    modalItem.recordId,
+                                    set.setKey,
+                                    -1,
+                                    "segment_a_prompt",
+                                    event.target.value
+                                  )
+                                }
+                              />
+                              <div className="video-clip-upload-grid">
+                                <div className="video-clip-upload-item">
+                                  <span>涓婁紶鍥剧墖锛堝彲閫夛級</span>
+                                  <input
+                                    accept="image/*"
+                                    className="video-file-input"
+                                    id={segmentAInputId}
+                                    onChange={(event) =>
+                                      void handleClipFrameFileChange(
+                                        modalItem.recordId,
+                                        set.setKey,
+                                        0,
+                                        "first",
+                                        event.target.files?.[0] ?? null
+                                      )
+                                    }
+                                    type="file"
+                                  />
+                                  <div className="video-file-row">
+                                    <label className="video-file-trigger" htmlFor={segmentAInputId}>
+                                      涓婁紶鍥剧墖
+                                    </label>
+                                    <small>{segmentAState.firstFrameName || "鏈笂浼?}</small>
+                                  </div>
+                                </div>
+                              </div>
+                              <div className="prompt-card-actions">
+                                <button
+                                  className="ghost"
+                                  disabled={!segmentAState.firstFrameDataUrl}
+                                  onClick={() =>
+                                    patchClipVideoState(modalItem.recordId, set.setKey, 0, {
+                                      firstFrameDataUrl: "",
+                                      firstFrameName: "",
+                                      error: ""
+                                    })
+                                  }
+                                  type="button"
+                                >
+                                  娓呯┖鍥剧墖
+                                </button>
+                                <button
+                                  className="primary-btn"
+                                  disabled={!safeText(segmentAPrompt) || segmentAProcessing}
+                                  onClick={() =>
+                                    void handleGenerateClipVideo(
+                                      modalItem.recordId,
+                                      set.setKey,
+                                      0,
+                                      segmentAPrompt,
+                                      segmentAState.firstFrameDataUrl,
+                                      ""
+                                    )
+                                  }
+                                  type="button"
+                                >
+                                  {segmentAState.status === "queued"
+                                    ? "浠诲姟鎺掗槦涓?.."
+                                    : segmentAState.status === "processing"
+                                      ? "瑙嗛鐢熸垚涓?.."
+                                      : segmentAState.videoUrl
+                                        ? "閲嶆柊鐢熸垚 A 娈佃棰?
+                                        : "鐢熸垚 A 娈佃棰?}
+                                </button>
+                              </div>
+                              <div className={`clip-status-panel status-${segmentAState.status}`}>
+                                <div className="clip-status-main">
+                                  <span className="clip-status-label">璇锋眰鐘舵€?/span>
+                                  <strong>{getClipVideoStatusText(segmentAState.status)}</strong>
+                                </div>
+                                <div className="clip-status-meta">
+                                  <span>鏇存柊鏃堕棿: {toDate(segmentAState.updatedAt)}</span>
+                                  {segmentAState.taskId ? <span>浠诲姟ID: {segmentAState.taskId}</span> : null}
+                                  {segmentATask ? <span>閲嶈瘯: {segmentATask.retryCount}/{segmentATask.maxRetries}</span> : null}
+                                </div>
+                              </div>
+                              {segmentAProcessing ? (
+                                <div className="analysis-loading">
+                                  {segmentAState.status === "queued"
+                                    ? `浠诲姟宸插叆闃燂紝鍚庡彴鍑嗗鎵ц锛堥噸璇?${segmentATask?.retryCount ?? 0}/${segmentATask?.maxRetries ?? 3}锛?..`
+                                    : `鍚庡彴鎵ц涓紙灏濊瘯 ${Math.max(segmentATask?.retryCount ?? 1, 1)}/${segmentATask?.maxRetries ?? 3}锛夛紝姝ｅ湪杞瑙嗛缁撴灉...`}
+                                </div>
+                              ) : null}
+                              {segmentAState.status === "failed" ? (
+                                <div className="analysis-error">瑙嗛鐢熸垚澶辫触: {segmentAState.error || "鏈煡閿欒"}</div>
+                              ) : null}
+                              {segmentAState.videoUrl ? (
+                                <div className="video-clip-result">
+                                  <a href={segmentAState.videoUrl} rel="noreferrer" target="_blank">
+                                    鎵撳紑瑙嗛閾炬帴
+                                  </a>
+                                  <video className="video-clip-player" controls preload="metadata" src={segmentAState.videoUrl} />
+                                </div>
+                              ) : null}
+                            </div>
+
+                            <div className="prompt-card prompt-split-card">
+                              <div className="prompt-item-title">segment_b_prompt</div>
+                              <textarea
+                                className="prompt-copy-textarea prompt-copy-textarea-compact"
+                                value={segmentBPrompt}
+                                onChange={(event) =>
+                                  handleVideoPromptChange(
+                                    modalItem.recordId,
+                                    set.setKey,
+                                    -1,
+                                    "segment_b_prompt",
+                                    event.target.value
+                                  )
+                                }
+                              />
+                              <div className="video-clip-upload-grid">
+                                <div className="video-clip-upload-item">
+                                  <span>涓婁紶鍥剧墖锛堝彲閫夛級</span>
+                                  <input
+                                    accept="image/*"
+                                    className="video-file-input"
+                                    id={segmentBInputId}
+                                    multiple
+                                    onChange={(event) =>
+                                      void handleClipReferenceImagesChange(
+                                        modalItem.recordId,
+                                        set.setKey,
+                                        1,
+                                        event.target.files
+                                      )
+                                    }
+                                    type="file"
+                                  />
+                                  <div className="video-file-row">
+                                    <label className="video-file-trigger" htmlFor={segmentBInputId}>
+                                      涓婁紶鍥剧墖
+                                    </label>
+                                    <small>
+                                      {segmentBState.uploadedImageNames.length
+                                        ? `${segmentBState.uploadedImageNames.length} 寮? ${segmentBState.uploadedImageNames.join(", ")}`
+                                        : "鏈笂浼?}
+                                    </small>
+                                  </div>
+                                </div>
+                              </div>
+                              <div className="prompt-card-actions">
+                                <button
+                                  className="ghost"
+                                  disabled={!segmentBState.uploadedImageDataUrls.length}
+                                  onClick={() =>
+                                    patchClipVideoState(modalItem.recordId, set.setKey, 1, {
+                                      firstFrameDataUrl: "",
+                                      firstFrameName: "",
+                                      uploadedImageDataUrls: [],
+                                      uploadedImageNames: [],
+                                      error: ""
+                                    })
+                                  }
+                                  type="button"
+                                >
+                                  娓呯┖鍥剧墖
+                                </button>
+                                <button
+                                  className="primary-btn"
+                                  disabled={!safeText(segmentBPrompt) || segmentBProcessing}
+                                  onClick={() =>
+                                    void handleGenerateClipVideo(
+                                      modalItem.recordId,
+                                      set.setKey,
+                                      1,
+                                      segmentBPrompt,
+                                      segmentBState.firstFrameDataUrl,
+                                      "",
+                                      segmentBState.uploadedImageDataUrls
+                                    )
+                                  }
+                                  type="button"
+                                >
+                                  {segmentBState.status === "queued"
+                                    ? "浠诲姟鎺掗槦涓?.."
+                                    : segmentBState.status === "processing"
+                                      ? "瑙嗛鐢熸垚涓?.."
+                                      : segmentBState.videoUrl
+                                        ? "閲嶆柊鐢熸垚 B 娈佃棰?
+                                        : "鐢熸垚 B 娈佃棰?}
+                                </button>
+                              </div>
+                              <div className={`clip-status-panel status-${segmentBState.status}`}>
+                                <div className="clip-status-main">
+                                  <span className="clip-status-label">璇锋眰鐘舵€?/span>
+                                  <strong>{getClipVideoStatusText(segmentBState.status)}</strong>
+                                </div>
+                                <div className="clip-status-meta">
+                                  <span>鏇存柊鏃堕棿: {toDate(segmentBState.updatedAt)}</span>
+                                  {segmentBState.taskId ? <span>浠诲姟ID: {segmentBState.taskId}</span> : null}
+                                  {segmentBTask ? <span>閲嶈瘯: {segmentBTask.retryCount}/{segmentBTask.maxRetries}</span> : null}
+                                </div>
+                              </div>
+                              {segmentBProcessing ? (
+                                <div className="analysis-loading">
+                                  {segmentBState.status === "queued"
+                                    ? `浠诲姟宸插叆闃燂紝鍚庡彴鍑嗗鎵ц锛堥噸璇?${segmentBTask?.retryCount ?? 0}/${segmentBTask?.maxRetries ?? 3}锛?..`
+                                    : `鍚庡彴鎵ц涓紙灏濊瘯 ${Math.max(segmentBTask?.retryCount ?? 1, 1)}/${segmentBTask?.maxRetries ?? 3}锛夛紝姝ｅ湪杞瑙嗛缁撴灉...`}
+                                </div>
+                              ) : null}
+                              {segmentBState.status === "failed" ? (
+                                <div className="analysis-error">瑙嗛鐢熸垚澶辫触: {segmentBState.error || "鏈煡閿欒"}</div>
+                              ) : null}
+                              {segmentBState.videoUrl ? (
+                                <div className="video-clip-result">
+                                  <a href={segmentBState.videoUrl} rel="noreferrer" target="_blank">
+                                    鎵撳紑瑙嗛閾炬帴
+                                  </a>
+                                  <video className="video-clip-player" controls preload="metadata" src={segmentBState.videoUrl} />
+                                </div>
+                              ) : null}
+                            </div>
+                          </div>
+                          {usageGuide ? <div className="analysis-loading">浣跨敤璇存槑: {usageGuide}</div> : null}
+                        </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="analysis-loading">鏅鸿兘浣撹繑鍥炰腑鏈瘑鍒埌 script_set_1~3 缁撴瀯銆?/div>
+                  )}
+                  {modalVideoScriptModelText ? (
+                    <div className="prompt-card prompt-split-card">
+                      <div className="prompt-item-title">鐭棰戞彁绀鸿瘝妯″瀷鍘熷鏂囨湰</div>
+                      <textarea className="prompt-copy-textarea prompt-copy-textarea-compact" readOnly value={modalVideoScriptModelText} />
+                      <div className="prompt-card-actions">
+                        <button className="ghost" onClick={() => void handleCopyVideoPrompt(modalVideoScriptModelText, false)} type="button">
+                          澶嶅埗鍘熷鏂囨湰
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
+                  {modalVideoScriptRequestText ? (
+                    <div className="prompt-card prompt-split-card">
+                      <div className="prompt-item-title">?????????????????</div>
+                      <textarea className="prompt-copy-textarea" readOnly value={modalVideoScriptRequestText} />
+                      <div className="prompt-card-actions">
+                        <button className="ghost" onClick={() => void handleCopyVideoPrompt(modalVideoScriptRequestText, false)} type="button">
+                          ?????? JSON
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
+                  {modalVideoScriptSystemPromptText ? (
+                    <div className="prompt-card prompt-split-card">
+                      <div className="prompt-item-title">??????system?</div>
+                      <textarea className="prompt-copy-textarea prompt-copy-textarea-compact" readOnly value={modalVideoScriptSystemPromptText} />
+                      <div className="prompt-card-actions">
+                        <button className="ghost" onClick={() => void handleCopyVideoPrompt(modalVideoScriptSystemPromptText, false)} type="button">
+                          ?? system ???
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
+                  {modalVideoScriptUserPayloadText ? (
+                    <div className="prompt-card prompt-split-card">
+                      <div className="prompt-item-title">????????user?</div>
+                      <textarea className="prompt-copy-textarea" readOnly value={modalVideoScriptUserPayloadText} />
+                      <div className="prompt-card-actions">
+                        <button className="ghost" onClick={() => void handleCopyVideoPrompt(modalVideoScriptUserPayloadText, false)} type="button">
+                          ?? user ??
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
+                  {modalVideoScriptResponseText ? (
+                    <div className="prompt-card prompt-split-card">
+                      <div className="prompt-item-title">鐭棰戞彁绀鸿瘝鍝嶅簲淇℃伅锛堝師濮?JSON锛?/div>
+                      <textarea className="prompt-copy-textarea" readOnly value={modalVideoScriptResponseText} />
+                      <div className="prompt-card-actions">
+                        <button className="ghost" onClick={() => void handleCopyVideoPrompt(modalVideoScriptResponseText, false)} type="button">
+                          澶嶅埗鍝嶅簲 JSON
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+
+              {modalSecondPrompt?.status === "completed" && modalPromptSections ? (
+                <div className="prompt-result-panel">
+                  <div className="prompt-result-head">
+                    <strong>鍥捐瘝璇锋眰缁撴灉锛堜富鍥?璇︽儏椤垫媶鍒嗭級</strong>
+                    <span>
+                      鐗堟湰 {modalSecondPrompt.result?.templateVersion} 路 {toDate(modalSecondPrompt.result?.generatedAt)}
+                    </span>
+                  </div>
+                  <div className="prompt-split-grid">
+                    <div className="prompt-card prompt-split-card">
+                      <div className="prompt-item-title">
+                        {modalPromptSections.main.title}锛坽modalPromptSections.main.cards.length}鏉★級
+                      </div>
+                      <div className="prompt-item-subtitle">鍥哄畾寮€鍦虹櫧 + EN 鎻愮ず璇嶏紝鍙洿鎺ュ鍒跺埌鐢熷浘妯″瀷銆?/div>
+                      <textarea className="prompt-copy-textarea" readOnly value={modalPromptSections.main.copyText} />
+                      <div className="prompt-card-actions">
+                        <button className="ghost" onClick={() => void handleCopyPromptSection(modalPromptSections.main.copyText, false)} type="button">
+                          澶嶅埗涓诲浘鎻愮ず璇?
+                        </button>
+                        <button
+                          className="primary-btn"
+                          onClick={() => void handleCopyPromptSection(modalPromptSections.main.copyText, true)}
+                          type="button"
+                        >
+                          澶嶅埗骞惰烦杞敓鍥鹃〉
+                        </button>
+                      </div>
+                    </div>
+                    <div className="prompt-card prompt-split-card">
+                      <div className="prompt-item-title">
+                        {modalPromptSections.detail.title}锛坽modalPromptSections.detail.cards.length}鏉★級
+                      </div>
+                      <div className="prompt-item-subtitle">鍥哄畾寮€鍦虹櫧 + EN 鎻愮ず璇嶏紝鍙洿鎺ュ鍒跺埌鐢熷浘妯″瀷銆?/div>
+                      <textarea className="prompt-copy-textarea" readOnly value={modalPromptSections.detail.copyText} />
+                      <div className="prompt-card-actions">
+                        <button className="ghost" onClick={() => void handleCopyPromptSection(modalPromptSections.detail.copyText, false)} type="button">
+                          澶嶅埗璇︽儏椤垫彁绀鸿瘝
+                        </button>
+                        <button
+                          className="primary-btn"
+                          onClick={() => void handleCopyPromptSection(modalPromptSections.detail.copyText, true)}
+                          type="button"
+                        >
+                          澶嶅埗骞惰烦杞敓鍥鹃〉
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                  {copyTip ? <div className="genspark-hint status-opened">{copyTip}</div> : null}
+                  <div className="genspark-hint status-opening">
+                    鐐瑰嚮鈥滃鍒跺苟璺宠浆鐢熷浘椤碘€濆皢鎵撳紑 {GENSPARK_IMAGE_URL}锛岃鍦ㄦ柊椤甸潰绮樿创鎻愮ず璇嶇敓鍥俱€?
+                  </div>
+                </div>
+              ) : null}
+            </div>
+
+            <div className="ai-modal-actions">
+              <button className="ghost" onClick={() => onOpenProduct(modalItem.recordId)} type="button">
+                鏌ョ湅鍟嗗搧
+              </button>
+              <button className="primary-btn" disabled={modalAnalyzing} onClick={() => onAnalyze(modalItem.recordId)} type="button">
+                {modalAnalyzing ? "鍒嗘瀽涓?.." : modalAnalysis.status === "completed" ? "閲嶆柊鍒嗘瀽" : "寮€濮嬪垎鏋?}
+              </button>
+              {VIDEO_SCRIPT_AGENT_ENABLED ? (
+                <button
+                  className="ghost"
+                  disabled={modalAnalysis.status !== "completed" || modalVideoGenerating}
+                  onClick={() =>
+                    void onGenerateVideoScript(modalItem.recordId, {
+                      productInfoText: modalVideoProductInfoText
+                    })
+                  }
+                  type="button"
+                >
+                  {modalAnalysis.status !== "completed"
+                    ? "鍏堝畬鎴愬垎鏋?
+                    : modalVideoGenerating
+                      ? "鐭棰戠敓鎴愪腑..."
+                      : modalVideoScript?.status === "completed"
+                        ? "閲嶈窇鐭棰戞彁绀鸿瘝"
+                        : "鐭棰戞彁绀鸿瘝"}
+                </button>
+              ) : null}
+              <button
+                className="ghost"
+                disabled={modalAnalysis.status !== "completed" || modalPromptGenerating}
+                onClick={() => void onGenerateSecondPrompt(modalItem.recordId)}
+                type="button"
+              >
+                {modalAnalysis.status !== "completed"
+                  ? "鍏堝畬鎴愬垎鏋?
+                  : modalPromptGenerating
+                    ? "鍥捐瘝鐢熸垚涓?.."
+                    : modalSecondPrompt?.status === "completed"
+                      ? "閲嶈窇鍥捐瘝璇锋眰"
+                      : "鍥捐瘝璇锋眰"}
+              </button>
+              <button className="ghost" onClick={handleOpenGensparkWindow} type="button">
+                鏂扮獥鍙ｆ墦寮€鐢熷浘椤?
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+function ProductCard(props: {
+  item: ProductRecord;
+  selected: boolean;
+  detailActive: boolean;
+  onOpenDetail: (recordId: string) => void;
+  onSelect: (recordId: string, checked: boolean) => void;
+  onDelete: (recordId: string) => Promise<void>;
+  onAnalyze: (recordId: string) => Promise<void>;
+  onGenerateVideoScript: (recordId: string) => Promise<void>;
+  onGenerateSecondPrompt: (recordId: string) => Promise<void>;
+}) {
+  const { item, selected, detailActive, onOpenDetail, onSelect, onDelete, onAnalyze, onGenerateVideoScript, onGenerateSecondPrompt } = props;
+  const analysis = normalizeAnalysisState(item.analysis);
+  const videoScript = normalizeVideoScriptState(item.videoScriptGeneration);
+  const secondPrompt = normalizeSecondPromptState(item.secondPromptGeneration);
+  const analyzing = analysis.status === "queued" || analysis.status === "processing";
+  const generatingVideoScript = videoScript.status === "processing";
+  const generatingPrompt = secondPrompt.status === "processing";
+  const canRunSecondPrompt = analysis.status === "completed";
+  const canRunVideoScript = analysis.status === "completed";
+  const skuSummary = item.skuDimensions
+    .slice(0, 2)
+    .map((dimension) => `${dimension.name}${dimension.options.length ? ` (${dimension.options.length})` : ""}`)
+    .join(" / ");
+
+  return (
+    <article className={`product-card ${detailActive ? "active" : ""}`}>
+      <div className="card-image-wrap">
+        {item.triggeredImage ? <img src={item.triggeredImage} alt={item.title} /> : <div className="image-fallback">No Image</div>}
+        <label className="select-chip">
+          <input checked={selected} onChange={(event) => onSelect(item.recordId, event.target.checked)} type="checkbox" />
+          閫夋嫨
+        </label>
+      </div>
+      <div className="card-content">
+        <button className="title-link-btn" onClick={() => onOpenDetail(item.recordId)} type="button">
+          {item.title}
+        </button>
+        <div className="card-price">
+          {toCurrency(item.priceMin)}
+          {item.priceMax !== null && item.priceMax !== item.priceMin ? ` - ${toCurrency(item.priceMax)}` : ""}
+        </div>
+        <div className="card-meta">{skuSummary || "瑙勬牸淇℃伅寰呰ˉ鍏?}</div>
+        <div className="card-meta">搴楅摵: {item.shopName}</div>
+        <div className="card-meta">鎶撳彇鏃堕棿: {toDate(item.capturedAt)}</div>
+        <div className={`analysis-chip status-${analysis.status}`}>AI: {analysisStatusLabel(analysis.status)}</div>
+        {VIDEO_SCRIPT_AGENT_ENABLED ? (
+          <div className={`prompt-chip status-${videoScript.status}`}>鐭棰? {videoScriptStatusLabel(videoScript.status)}</div>
+        ) : null}
+        <div className={`prompt-chip status-${secondPrompt.status}`}>鍥捐瘝: {secondPromptStatusLabel(secondPrompt.status)}</div>
+        <div className="card-actions">
+          <button className="primary-btn" disabled={analyzing} onClick={() => onAnalyze(item.recordId)} type="button">
+            {analyzing ? "鍒嗘瀽涓?.." : analysis.status === "completed" ? "閲嶈窇鍒嗘瀽" : "AI鍒嗘瀽"}
+          </button>
+          {VIDEO_SCRIPT_AGENT_ENABLED ? (
+            <button
+              className="ghost"
+              disabled={!canRunVideoScript || generatingVideoScript}
+              onClick={() => void onGenerateVideoScript(item.recordId)}
+              type="button"
+            >
+              {!canRunVideoScript
+                ? "鍏堝畬鎴愬垎鏋?
+                : generatingVideoScript
+                  ? "鐭棰戠敓鎴愪腑..."
+                  : videoScript.status === "completed"
+                    ? "閲嶈窇鐭棰戞彁绀鸿瘝"
+                    : "鐭棰戞彁绀鸿瘝"}
+            </button>
+          ) : null}
+          <button
+            className="ghost"
+            disabled={!canRunSecondPrompt || generatingPrompt}
+            onClick={() => void onGenerateSecondPrompt(item.recordId)}
+            type="button"
+          >
+            {!canRunSecondPrompt ? "鍏堝畬鎴愬垎鏋? : generatingPrompt ? "鍥捐瘝鐢熸垚涓?.." : secondPrompt.status === "completed" ? "閲嶈窇鍥捐瘝璇锋眰" : "鍥捐瘝璇锋眰"}
+          </button>
+          <button className="danger-btn" onClick={() => onDelete(item.recordId)} type="button">
+            鍒犻櫎
+          </button>
+        </div>
+      </div>
+    </article>
+  );
+}
+
+function ProductRow(props: {
+  item: ProductRecord;
+  selected: boolean;
+  detailActive: boolean;
+  onOpenDetail: (recordId: string) => void;
+  onSelect: (recordId: string, checked: boolean) => void;
+  onDelete: (recordId: string) => Promise<void>;
+  onAnalyze: (recordId: string) => Promise<void>;
+  onGenerateVideoScript: (recordId: string) => Promise<void>;
+  onGenerateSecondPrompt: (recordId: string) => Promise<void>;
+}) {
+  const { item, selected, detailActive, onOpenDetail, onSelect, onDelete, onAnalyze, onGenerateVideoScript, onGenerateSecondPrompt } = props;
+  const analysis = normalizeAnalysisState(item.analysis);
+  const videoScript = normalizeVideoScriptState(item.videoScriptGeneration);
+  const secondPrompt = normalizeSecondPromptState(item.secondPromptGeneration);
+  const analyzing = analysis.status === "queued" || analysis.status === "processing";
+  const generatingVideoScript = videoScript.status === "processing";
+  const generatingPrompt = secondPrompt.status === "processing";
+  const canRunSecondPrompt = analysis.status === "completed";
+  const canRunVideoScript = analysis.status === "completed";
+
+  return (
+    <div className={`product-row ${detailActive ? "active" : ""}`}>
+      <label>
+        <input checked={selected} onChange={(event) => onSelect(item.recordId, event.target.checked)} type="checkbox" />
+      </label>
+      <img src={item.triggeredImage || ""} alt={item.title} />
+      <button className="row-link-btn" onClick={() => onOpenDetail(item.recordId)} type="button">
+        {item.title}
+      </button>
+      <div>{toCurrency(item.priceMin)}</div>
+      <div>{item.shopName}</div>
+      <div>{analysisStatusLabel(analysis.status)} / {secondPromptStatusLabel(secondPrompt.status)}</div>
+      <div className="row-actions">
+        <button className="primary-btn small" disabled={analyzing} onClick={() => onAnalyze(item.recordId)} type="button">
+          {analyzing ? "涓?.." : "鍒嗘瀽"}
+        </button>
+        {VIDEO_SCRIPT_AGENT_ENABLED ? (
+          <button
+            className="ghost small-inline"
+            disabled={!canRunVideoScript || generatingVideoScript}
+            onClick={() => void onGenerateVideoScript(item.recordId)}
+            type="button"
+          >
+            {!canRunVideoScript ? "鍏堝垎鏋? : generatingVideoScript ? "鐭棰戜腑..." : "鐭棰?}
+          </button>
+        ) : null}
+        <button
+          className="ghost small-inline"
+          disabled={!canRunSecondPrompt || generatingPrompt}
+          onClick={() => void onGenerateSecondPrompt(item.recordId)}
+          type="button"
+        >
+          {!canRunSecondPrompt ? "鍏堝垎鏋? : generatingPrompt ? "鍥捐瘝涓?.." : "鍥捐瘝璇锋眰"}
+        </button>
+        <button className="danger-btn small" onClick={() => onDelete(item.recordId)} type="button">
+          鍒犻櫎
+        </button>
+      </div>
+    </div>
+  );
+}
+
+type ManagedApiKeys = {
+  firstPassApiKey: string;
+  promptPackApiKey: string;
+  shortVideoPromptApiKey: string;
+  shortVideoRenderApiKey: string;
+};
+
+type ManagedRequestModels = {
+  firstPassModel: string;
+  promptPackModel: string;
+  shortVideoPromptModel: string;
+  shortVideoRenderModel: string;
+};
+
+type ManagedApiEndpoints = {
+  firstPassAnalysisApiUrl: string;
+  secondStagePromptApiUrl: string;
+  shortVideoPromptApiUrl: string;
+  shortVideoBaseApiUrl: string;
+};
+
+type ManagerLoginResponse = {
+  ok: boolean;
+  token?: string;
+  expiresAt?: string;
+  message?: string;
+};
+
+type ManagerApiKeysResponse = {
+  ok: boolean;
+  apiKeys?: Record<string, unknown>;
+  models?: Record<string, unknown>;
+  apiEndpoints?: Record<string, unknown>;
+  updatedAt?: string;
+  message?: string;
+};
+
+type ManagerResetResponse = {
+  ok: boolean;
+  message?: string;
+  email?: string;
+  expiresAt?: string;
+  verifiedUntil?: string;
+};
+
+const DEFAULT_MANAGED_API_KEYS: ManagedApiKeys = {
+  firstPassApiKey: "",
+  promptPackApiKey: "",
+  shortVideoPromptApiKey: "",
+  shortVideoRenderApiKey: ""
+};
+
+const DEFAULT_MANAGED_REQUEST_MODELS: ManagedRequestModels = {
+  firstPassModel: "",
+  promptPackModel: "",
+  shortVideoPromptModel: "",
+  shortVideoRenderModel: ""
+};
+
+const DEFAULT_MANAGED_API_ENDPOINTS: ManagedApiEndpoints = {
+  firstPassAnalysisApiUrl: "",
+  secondStagePromptApiUrl: "",
+  shortVideoPromptApiUrl: "",
+  shortVideoBaseApiUrl: ""
+};
+
+function normalizeManagedApiKeys(input: unknown): ManagedApiKeys {
+  const source = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
+  const firstPassApiKey = safeText(
+    source.firstPassApiKey ?? source.first_request_api_key ?? source.FIRST_PASS_ANALYSIS_API_KEY ?? source.claudeAuthToken ?? source.CLAUDE_AUTH_TOKEN
+  );
+  const promptPackApiKey = safeText(
+    source.promptPackApiKey ??
+      source.prompt_pack_api_key ??
+      source.SECOND_STAGE_PROMPT_API_KEY ??
+      source.secondStagePromptApiKey ??
+      source.secondPromptApiKey ??
+      source.cozeApiToken ??
+      source.COZE_API_TOKEN
+  );
+  const shortVideoPromptApiKey = safeText(
+    source.shortVideoPromptApiKey ??
+      source.short_video_prompt_api_key ??
+      source.SHORT_VIDEO_PROMPT_API_KEY ??
+      source.videoPromptApiKey ??
+      source.shortVideoApiKey ??
+      source.short_video_api_key ??
+      source.SHORT_VIDEO_API_KEY ??
+      source.cozeApiToken ??
+      source.COZE_API_TOKEN
+  );
+  const shortVideoRenderApiKey = safeText(
+    source.shortVideoRenderApiKey ??
+      source.short_video_render_api_key ??
+      source.SHORT_VIDEO_RENDER_API_KEY ??
+      source.videoRenderApiKey ??
+      source.shortVideoApiKey ??
+      source.short_video_api_key ??
+      source.SHORT_VIDEO_API_KEY ??
+      source.veoApiKey ??
+      source.VEO_API_KEY ??
+      source.cozeApiToken ??
+      source.COZE_API_TOKEN
+  );
+  return {
+    firstPassApiKey,
+    promptPackApiKey: promptPackApiKey || firstPassApiKey,
+    shortVideoPromptApiKey: shortVideoPromptApiKey || promptPackApiKey || firstPassApiKey,
+    shortVideoRenderApiKey: shortVideoRenderApiKey || shortVideoPromptApiKey || promptPackApiKey || firstPassApiKey
+  };
+}
+
+function normalizeManagedApiEndpoints(input: unknown): ManagedApiEndpoints {
+  const source = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
+  return {
+    firstPassAnalysisApiUrl: safeText(
+      source.firstPassAnalysisApiUrl ??
+        source.first_pass_analysis_api_url ??
+        source.FIRST_PASS_ANALYSIS_API_URL ??
+        source.firstPassApiUrl ??
+        source.analysisApiUrl ??
+        source.vectorengineFirstPassApiUrl ??
+        source.VECTORENGINE_FIRST_PASS_API_URL
+    ),
+    secondStagePromptApiUrl: safeText(
+      source.secondStagePromptApiUrl ??
+        source.second_stage_prompt_api_url ??
+        source.SECOND_STAGE_PROMPT_API_URL ??
+        source.promptPackApiUrl ??
+        source.promptApiUrl ??
+        source.vectorengineSecondStageApiUrl ??
+        source.VECTORENGINE_SECOND_STAGE_API_URL
+    ),
+    shortVideoPromptApiUrl: safeText(
+      source.shortVideoPromptApiUrl ??
+        source.short_video_prompt_api_url ??
+        source.SHORT_VIDEO_PROMPT_API_URL ??
+        source.videoPromptApiUrl
+    ),
+    shortVideoBaseApiUrl: safeText(
+      source.shortVideoBaseApiUrl ??
+        source.short_video_base_api_url ??
+        source.SHORT_VIDEO_BASE_API_URL ??
+        source.baseApiUrl ??
+        source.videoBaseApiUrl ??
+        source.veoApiBaseUrl ??
+        source.VEO_API_BASE_URL
+    )
+  };
+}
+
+function normalizeManagedRequestModels(input: unknown): ManagedRequestModels {
+  const source = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
+  return {
+    firstPassModel: safeText(source.firstPassModel ?? source.first_pass_model ?? source.FIRST_PASS_ANALYSIS_MODEL ?? source.analysisModel),
+    promptPackModel: safeText(source.promptPackModel ?? source.prompt_pack_model ?? source.SECOND_STAGE_PROMPT_MODEL ?? source.promptModel),
+    shortVideoPromptModel: safeText(
+      source.shortVideoPromptModel ??
+        source.short_video_prompt_model ??
+        source.SHORT_VIDEO_PROMPT_MODEL ??
+        source.videoPromptModel
+    ),
+    shortVideoRenderModel: safeText(
+      source.shortVideoRenderModel ??
+        source.short_video_render_model ??
+        source.SHORT_VIDEO_RENDER_MODEL ??
+        source.shortVideoModel ??
+        source.short_video_model ??
+        source.VEO_DEFAULT_MODEL ??
+        source.videoModel
+    )
+  };
+}
+
+function managerAuthHeaders(token: string) {
+  return {
+    "Content-Type": "application/json",
+    "X-Settings-Token": token
+  };
+}
+
+function ApiKeyManagerSection() {
+  const [sessionToken, setSessionToken] = useState("");
+  const [loadingKeys, setLoadingKeys] = useState(false);
+  const [loginPending, setLoginPending] = useState(false);
+  const [savePending, setSavePending] = useState(false);
+  const [passwordInput, setPasswordInput] = useState("");
+  const [apiKeys, setApiKeys] = useState<ManagedApiKeys>(DEFAULT_MANAGED_API_KEYS);
+  const [requestModels, setRequestModels] = useState<ManagedRequestModels>(DEFAULT_MANAGED_REQUEST_MODELS);
+  const [apiEndpoints, setApiEndpoints] = useState<ManagedApiEndpoints>(DEFAULT_MANAGED_API_ENDPOINTS);
+  const [statusError, setStatusError] = useState("");
+  const [statusNotice, setStatusNotice] = useState("");
+  const [keyUpdatedAt, setKeyUpdatedAt] = useState<string | null>(null);
+
+  const [resetCodeInput, setResetCodeInput] = useState("");
+  const [newManagerPassword, setNewManagerPassword] = useState("");
+  const [newManagerPasswordConfirm, setNewManagerPasswordConfirm] = useState("");
+  const [resetCodeExpiresAt, setResetCodeExpiresAt] = useState<string | null>(null);
+  const [resetVerifiedUntil, setResetVerifiedUntil] = useState<string | null>(null);
+  const [resetPending, setResetPending] = useState(false);
+
+  const clearSession = useCallback(() => {
+    setSessionToken("");
+    setPasswordInput("");
+    setApiKeys(DEFAULT_MANAGED_API_KEYS);
+    setRequestModels(DEFAULT_MANAGED_REQUEST_MODELS);
+    setApiEndpoints(DEFAULT_MANAGED_API_ENDPOINTS);
+    window.sessionStorage.removeItem(API_KEY_MANAGER_SESSION_STORAGE_KEY);
+  }, []);
+
+  const fetchApiKeys = useCallback(
+    async (token: string) => {
+      if (!token) {
+        return false;
+      }
+      setLoadingKeys(true);
+      setStatusError("");
+      try {
+        const response = await apiFetch(`/api/system/api-keys`, {
+          method: "GET",
+          headers: managerAuthHeaders(token)
+        });
+        const json = (await response.json()) as ManagerApiKeysResponse;
+        if (response.status === 401) {
+          clearSession();
+          setStatusError("鐧诲綍宸插け鏁堬紝璇烽噸鏂拌緭鍏ラ〉闈㈠瘑鐮併€?);
+          return false;
+        }
+        if (!response.ok || !json.ok || !json.apiKeys) {
+          setStatusError(safeText(json?.message) || `璇诲彇 API Key 澶辫触: ${response.status}`);
+          return false;
+        }
+        setApiKeys(normalizeManagedApiKeys(json.apiKeys));
+        setRequestModels(normalizeManagedRequestModels(json.models));
+        setApiEndpoints(normalizeManagedApiEndpoints(json.apiEndpoints));
+        setKeyUpdatedAt(json.updatedAt ?? new Date().toISOString());
+        return true;
+      } catch (error) {
+        setStatusError(error instanceof Error ? error.message : "璇诲彇 API Key 澶辫触");
+        return false;
+      } finally {
+        setLoadingKeys(false);
+      }
+    },
+    [clearSession]
+  );
+
+  useEffect(() => {
+    const token = safeText(window.sessionStorage.getItem(API_KEY_MANAGER_SESSION_STORAGE_KEY));
+    if (!token) {
+      return;
+    }
+    setSessionToken(token);
+    void fetchApiKeys(token);
+  }, [fetchApiKeys]);
+
+  const handleLogin = useCallback(async () => {
+    const password = String(passwordInput || "");
+    if (!password) {
+      setStatusError("璇疯緭鍏ラ〉闈㈠瘑鐮併€?);
+      return;
+    }
+    setLoginPending(true);
+    setStatusError("");
+    setStatusNotice("");
+    try {
+      const response = await apiFetch(`/api/system/credentials/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password })
+      });
+      const json = (await response.json()) as ManagerLoginResponse;
+      if (!response.ok || !json.ok || !json.token) {
+        setStatusError(safeText(json?.message) || `鐧诲綍澶辫触: ${response.status}`);
+        return;
+      }
+      const token = json.token;
+      setSessionToken(token);
+      window.sessionStorage.setItem(API_KEY_MANAGER_SESSION_STORAGE_KEY, token);
+      const loaded = await fetchApiKeys(token);
+      if (loaded) {
+        setStatusNotice("宸茶繘鍏?API Key 绠＄悊椤甸潰銆?);
+      }
+    } catch (error) {
+      setStatusError(error instanceof Error ? error.message : "鐧诲綍澶辫触");
+    } finally {
+      setLoginPending(false);
+    }
+  }, [fetchApiKeys, passwordInput]);
+
+  const handleLogout = useCallback(async () => {
+    const token = sessionToken;
+    clearSession();
+    setStatusNotice("宸查€€鍑?API Key 绠＄悊銆?);
+    if (!token) {
+      return;
+    }
+    try {
+      await apiFetch(`/api/system/credentials/logout`, {
+        method: "POST",
+        headers: managerAuthHeaders(token)
+      });
+    } catch (_error) {
+      // no-op
+    }
+  }, [clearSession, sessionToken]);
+
+  const handleSaveApiKeys = useCallback(async () => {
+    if (!sessionToken) {
+      setStatusError("璇峰厛杈撳叆椤甸潰瀵嗙爜銆?);
+      return;
+    }
+    setSavePending(true);
+    setStatusError("");
+    setStatusNotice("");
+    try {
+      const response = await apiFetch(`/api/system/api-keys`, {
+        method: "PUT",
+        headers: managerAuthHeaders(sessionToken),
+        body: JSON.stringify({ apiKeys, models: requestModels, apiEndpoints })
+      });
+      const json = (await response.json()) as ManagerApiKeysResponse;
+      if (response.status === 401) {
+        clearSession();
+        setStatusError("鐧诲綍宸插け鏁堬紝璇烽噸鏂拌緭鍏ラ〉闈㈠瘑鐮併€?);
+        return;
+      }
+      if (!response.ok || !json.ok || !json.apiKeys) {
+        setStatusError(safeText(json?.message) || `淇濆瓨澶辫触: ${response.status}`);
+        return;
+      }
+      setApiKeys(normalizeManagedApiKeys(json.apiKeys));
+      setRequestModels(normalizeManagedRequestModels(json.models));
+      setApiEndpoints(normalizeManagedApiEndpoints(json.apiEndpoints));
+      setKeyUpdatedAt(json.updatedAt ?? new Date().toISOString());
+      setStatusNotice("API Key 宸蹭繚瀛樺苟绔嬪嵆鐢熸晥銆?);
+    } catch (error) {
+      setStatusError(error instanceof Error ? error.message : "淇濆瓨澶辫触");
+    } finally {
+      setSavePending(false);
+    }
+  }, [apiEndpoints, apiKeys, clearSession, requestModels, sessionToken]);
+
+  const handleRequestResetCode = useCallback(async () => {
+    setResetPending(true);
+    setStatusError("");
+    setStatusNotice("");
+    try {
+      const response = await apiFetch(`/api/system/credentials/password-reset/request`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({})
+      });
+      const json = (await response.json()) as ManagerResetResponse;
+      if (!response.ok || !json.ok) {
+        setStatusError(safeText(json?.message) || `楠岃瘉鐮佽姹傚け璐? ${response.status}`);
+        return;
+      }
+      setResetCodeInput("");
+      setResetCodeExpiresAt(json.expiresAt ?? null);
+      setResetVerifiedUntil(null);
+      setStatusNotice("16 浣嶉獙璇佺爜宸插彂閫佸埌鎸囧畾閭锛岃鍦?5 鍒嗛挓鍐呭畬鎴愭牎楠屻€?);
+    } catch (error) {
+      setStatusError(error instanceof Error ? error.message : "楠岃瘉鐮佽姹傚け璐?);
+    } finally {
+      setResetPending(false);
+    }
+  }, []);
+
+  const handleVerifyResetCode = useCallback(async () => {
+    const code = safeText(resetCodeInput);
+    if (!/^\d{16}$/.test(code)) {
+      setStatusError("璇疯緭鍏?16 浣嶆暟瀛楅獙璇佺爜銆?);
+      return;
+    }
+    setResetPending(true);
+    setStatusError("");
+    setStatusNotice("");
+    try {
+      const response = await apiFetch(`/api/system/credentials/password-reset/verify`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code })
+      });
+      const json = (await response.json()) as ManagerResetResponse;
+      if (!response.ok || !json.ok) {
+        setStatusError(safeText(json?.message) || `楠岃瘉鐮佹牎楠屽け璐? ${response.status}`);
+        return;
+      }
+      setResetVerifiedUntil(json.verifiedUntil ?? null);
+      setStatusNotice("楠岃瘉鐮佹牎楠岄€氳繃锛岃杈撳叆鏂板瘑鐮佸苟鎻愪氦淇敼銆?);
+    } catch (error) {
+      setStatusError(error instanceof Error ? error.message : "楠岃瘉鐮佹牎楠屽け璐?);
+    } finally {
+      setResetPending(false);
+    }
+  }, [resetCodeInput]);
+
+  const handleUpdateManagerPassword = useCallback(async () => {
+    if (!resetVerifiedUntil) {
+      setStatusError("璇峰厛瀹屾垚楠岃瘉鐮佹牎楠岋紝鍐嶄慨鏀瑰瘑鐮併€?);
+      return;
+    }
+    const nextPassword = String(newManagerPassword || "");
+    const confirmPassword = String(newManagerPasswordConfirm || "");
+    if (!nextPassword || nextPassword.length < 8) {
+      setStatusError("鏂板瘑鐮佽嚦灏?8 浣嶃€?);
+      return;
+    }
+    if (nextPassword !== confirmPassword) {
+      setStatusError("涓ゆ杈撳叆鐨勬柊瀵嗙爜涓嶄竴鑷淬€?);
+      return;
+    }
+    setResetPending(true);
+    setStatusError("");
+    setStatusNotice("");
+    try {
+      const response = await apiFetch(`/api/system/credentials/password/update`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ newPassword: nextPassword })
+      });
+      const json = (await response.json()) as ManagerResetResponse;
+      if (!response.ok || !json.ok) {
+        setStatusError(safeText(json?.message) || `瀵嗙爜淇敼澶辫触: ${response.status}`);
+        return;
+      }
+      clearSession();
+      setResetCodeInput("");
+      setResetCodeExpiresAt(null);
+      setResetVerifiedUntil(null);
+      setNewManagerPassword("");
+      setNewManagerPasswordConfirm("");
+      setStatusNotice("瀵嗙爜淇敼鎴愬姛锛岃浣跨敤鏂板瘑鐮侀噸鏂拌繘鍏ョ鐞嗛〉銆?);
+    } catch (error) {
+      setStatusError(error instanceof Error ? error.message : "瀵嗙爜淇敼澶辫触");
+    } finally {
+      setResetPending(false);
+    }
+  }, [clearSession, newManagerPassword, newManagerPasswordConfirm, resetVerifiedUntil]);
+
+  return (
+    <section className="apikey-page">
+      {statusError ? <div className="error-banner">{statusError}</div> : null}
+      {statusNotice ? <div className="loading">{statusNotice}</div> : null}
+
+      <div className="apikey-grid">
+        <article className="apikey-card">
+          <h3>API Key 绠＄悊</h3>
+          <p>璇疯緭鍏ョ鐞嗗瘑鐮佽繘鍏ラ〉闈€備繚瀛樺悗浼氱粺涓€瑕嗙洊鍚庣璇锋眰鎵€浣跨敤鐨?Key 涓庤姹傚湴鍧€銆?/p>
+          {!sessionToken ? (
+            <div className="apikey-form">
+              <label className="apikey-field">
+                椤甸潰瀵嗙爜
+                <input
+                  autoComplete="current-password"
+                  onChange={(event) => setPasswordInput(event.target.value)}
+                  placeholder="璇疯緭鍏ラ〉闈㈠瘑鐮?
+                  type="password"
+                  value={passwordInput}
+                />
+              </label>
+              <button className="primary-btn" disabled={loginPending} onClick={() => void handleLogin()} type="button">
+                {loginPending ? "杩涘叆涓?.." : "杩涘叆绠＄悊椤?}
+              </button>
+            </div>
+          ) : (
+            <div className="apikey-form">
+              <label className="apikey-field">
+                <span className="apikey-field-title">FIRST_PASS_ANALYSIS_API_KEY</span>
+                <small className="apikey-field-help">Used by first-pass product analysis (`POST /api/products/:recordId/analyze`).</small>
+                <input
+                  autoComplete="off"
+                  onChange={(event) => setApiKeys((prev) => ({ ...prev, firstPassApiKey: event.target.value }))}
+                  placeholder="Key for first-pass analysis"
+                  type="password"
+                  value={apiKeys.firstPassApiKey}
+                />
+              </label>
+              <label className="apikey-field">
+                <span className="apikey-field-title">FIRST_PASS_ANALYSIS_MODEL</span>
+                <small className="apikey-field-help">Model name for first-pass analysis (leave empty to use default model).</small>
+                <input
+                  autoComplete="off"
+                  onChange={(event) => setRequestModels((prev) => ({ ...prev, firstPassModel: event.target.value }))}
+                  placeholder="Optional model name"
+                  type="text"
+                  value={requestModels.firstPassModel}
+                />
+              </label>
+              <label className="apikey-field">
+                <span className="apikey-field-title">FIRST_PASS_ANALYSIS_API_URL</span>
+                <small className="apikey-field-help">Request URL used by first-pass analysis (`POST /api/products/:recordId/analyze`).</small>
+                <input
+                  autoComplete="off"
+                  onChange={(event) => setApiEndpoints((prev) => ({ ...prev, firstPassAnalysisApiUrl: event.target.value }))}
+                  placeholder="https://.../v1/chat/completions"
+                  type="text"
+                  value={apiEndpoints.firstPassAnalysisApiUrl}
+                />
+              </label>
+              <label className="apikey-field">
+                <span className="apikey-field-title">SECOND_STAGE_PROMPT_API_KEY</span>
+                <small className="apikey-field-help">Used by prompt-pack generation (`POST /api/products/:recordId/prompt-pack`).</small>
+                <input
+                  autoComplete="off"
+                  onChange={(event) => setApiKeys((prev) => ({ ...prev, promptPackApiKey: event.target.value }))}
+                  placeholder="Key for prompt-pack generation"
+                  type="password"
+                  value={apiKeys.promptPackApiKey}
+                />
+              </label>
+              <label className="apikey-field">
+                <span className="apikey-field-title">SECOND_STAGE_PROMPT_MODEL</span>
+                <small className="apikey-field-help">Model name for prompt-pack generation (leave empty to use default model).</small>
+                <input
+                  autoComplete="off"
+                  onChange={(event) => setRequestModels((prev) => ({ ...prev, promptPackModel: event.target.value }))}
+                  placeholder="Optional model name"
+                  type="text"
+                  value={requestModels.promptPackModel}
+                />
+              </label>
+              <label className="apikey-field">
+                <span className="apikey-field-title">SECOND_STAGE_PROMPT_API_URL</span>
+                <small className="apikey-field-help">Request URL used by prompt-pack generation (`POST /api/products/:recordId/prompt-pack`).</small>
+                <input
+                  autoComplete="off"
+                  onChange={(event) => setApiEndpoints((prev) => ({ ...prev, secondStagePromptApiUrl: event.target.value }))}
+                  placeholder="https://.../v1/chat/completions"
+                  type="text"
+                  value={apiEndpoints.secondStagePromptApiUrl}
+                />
+              </label>
+              <label className="apikey-field">
+                <span className="apikey-field-title">SHORT_VIDEO_PROMPT_API_KEY</span>
+                <small className="apikey-field-help">Used by video-script generation (`POST /api/products/:recordId/video-script`).</small>
+                <input
+                  autoComplete="off"
+                  onChange={(event) => setApiKeys((prev) => ({ ...prev, shortVideoPromptApiKey: event.target.value }))}
+                  placeholder="Key for video-script generation"
+                  type="password"
+                  value={apiKeys.shortVideoPromptApiKey}
+                />
+              </label>
+              <label className="apikey-field">
+                <span className="apikey-field-title">SHORT_VIDEO_PROMPT_MODEL</span>
+                <small className="apikey-field-help">Model name for short-video prompt generation (leave empty to use default model).</small>
+                <input
+                  autoComplete="off"
+                  onChange={(event) => setRequestModels((prev) => ({ ...prev, shortVideoPromptModel: event.target.value }))}
+                  placeholder="Optional model name"
+                  type="text"
+                  value={requestModels.shortVideoPromptModel}
+                />
+              </label>
+              <label className="apikey-field">
+                <span className="apikey-field-title">SHORT_VIDEO_PROMPT_API_URL</span>
+                <small className="apikey-field-help">Request URL used by video-script generation (`POST /api/products/:recordId/video-script`).</small>
+                <input
+                  autoComplete="off"
+                  onChange={(event) => setApiEndpoints((prev) => ({ ...prev, shortVideoPromptApiUrl: event.target.value }))}
+                  placeholder="https://.../v1/chat/completions"
+                  type="text"
+                  value={apiEndpoints.shortVideoPromptApiUrl}
+                />
+              </label>
+              <label className="apikey-field">
+                <span className="apikey-field-title">SHORT_VIDEO_RENDER_API_KEY</span>
+                <small className="apikey-field-help">Used by video rendering and status query (`POST /api/products/:recordId/video-clips/generate`).</small>
+                <input
+                  autoComplete="off"
+                  onChange={(event) => setApiKeys((prev) => ({ ...prev, shortVideoRenderApiKey: event.target.value }))}
+                  placeholder="Key for video rendering and status query"
+                  type="password"
+                  value={apiKeys.shortVideoRenderApiKey}
+                />
+              </label>
+              <label className="apikey-field">
+                <span className="apikey-field-title">SHORT_VIDEO_RENDER_MODEL</span>
+                <small className="apikey-field-help">Model name used when creating/querying short videos.</small>
+                <input
+                  autoComplete="off"
+                  onChange={(event) => setRequestModels((prev) => ({ ...prev, shortVideoRenderModel: event.target.value }))}
+                  placeholder="Model name"
+                  type="text"
+                  value={requestModels.shortVideoRenderModel}
+                />
+              </label>
+              <label className="apikey-field">
+                <span className="apikey-field-title">SHORT_VIDEO_BASE_API_URL</span>
+                <small className="apikey-field-help">Base URL for video create/query APIs, e.g. `https://api.vectorengine.ai`.</small>
+                <input
+                  autoComplete="off"
+                  onChange={(event) => setApiEndpoints((prev) => ({ ...prev, shortVideoBaseApiUrl: event.target.value }))}
+                  placeholder="https://..."
+                  type="text"
+                  value={apiEndpoints.shortVideoBaseApiUrl}
+                />
+              </label>
+              <div className="apikey-actions">
+                <button className="primary-btn" disabled={savePending || loadingKeys} onClick={() => void handleSaveApiKeys()} type="button">
+                  {savePending ? "淇濆瓨涓?.." : "淇濆瓨 API Key"}
+                </button>
+                <button className="ghost" disabled={loadingKeys} onClick={() => void fetchApiKeys(sessionToken)} type="button">
+                  {loadingKeys ? "鍒锋柊涓?.." : "鍒锋柊"}
+                </button>
+                <button className="danger-btn" onClick={() => void handleLogout()} type="button">
+                  閫€鍑虹鐞?
+                </button>
+              </div>
+              <small className="apikey-note">鏈€杩戞洿鏂帮細{toDate(keyUpdatedAt)}</small>
+            </div>
+          )}
+        </article>
+
+        <article className="apikey-card">
+          <h3>淇敼绠＄悊椤靛瘑鐮?/h3>
+          <p>鐐瑰嚮鎸夐挳鍚庯紝绯荤粺浼氳嚜鍔ㄥ皢 16 浣嶉獙璇佺爜鍙戦€佸埌鎸囧畾閭銆傞獙璇佺爜涓嶄細鍦ㄩ〉闈㈠睍绀猴紝璇蜂粠閭鑾峰彇鍚庤緭鍏ユ牎楠屻€?/p>
+          <div className="apikey-form">
+            <div className="apikey-actions">
+              <button className="primary-btn" disabled={resetPending} onClick={() => void handleRequestResetCode()} type="button">
+                {resetPending ? "澶勭悊涓?.." : "鐢熸垚16浣嶉獙璇佺爜骞跺彂璧烽偖浠?}
+              </button>
+            </div>
+            <small className="apikey-note">
+              楠岃瘉鐮佷粎鍙粠閭鑾峰彇锛岄〉闈笉鏄剧ず鏄庢枃銆倇resetCodeExpiresAt ? `锛堟湰娆℃湁鏁堟湡鑷?${toDate(resetCodeExpiresAt)}锛塦 : ""}
+            </small>
+            <label className="apikey-field">
+              杈撳叆閭涓殑16浣嶉獙璇佺爜
+              <input
+                inputMode="numeric"
+                maxLength={16}
+                onChange={(event) => setResetCodeInput(event.target.value.replace(/\D/g, "").slice(0, 16))}
+                placeholder="璇疯緭鍏?6浣嶆暟瀛?
+                type="text"
+                value={resetCodeInput}
+              />
+            </label>
+            <div className="apikey-actions">
+              <button className="ghost" disabled={resetPending} onClick={() => void handleVerifyResetCode()} type="button">
+                {resetPending ? "鏍￠獙涓?.." : "鏍￠獙楠岃瘉鐮?}
+              </button>
+            </div>
+            <small className="apikey-note">{resetVerifiedUntil ? `宸查€氳繃鏍￠獙锛屾湁鏁堟湡鑷?${toDate(resetVerifiedUntil)}` : "灏氭湭閫氳繃楠岃瘉鐮佹牎楠?}</small>
+            <label className="apikey-field">
+              鏂板瘑鐮?
+              <input
+                autoComplete="new-password"
+                disabled={!resetVerifiedUntil}
+                onChange={(event) => setNewManagerPassword(event.target.value)}
+                placeholder="鑷冲皯8浣?
+                type="password"
+                value={newManagerPassword}
+              />
+            </label>
+            <label className="apikey-field">
+              纭鏂板瘑鐮?
+              <input
+                autoComplete="new-password"
+                disabled={!resetVerifiedUntil}
+                onChange={(event) => setNewManagerPasswordConfirm(event.target.value)}
+                placeholder="鍐嶆杈撳叆鏂板瘑鐮?
+                type="password"
+                value={newManagerPasswordConfirm}
+              />
+            </label>
+            <button
+              className="danger-btn"
+              disabled={resetPending || !resetVerifiedUntil}
+              onClick={() => void handleUpdateManagerPassword()}
+              type="button"
+            >
+              {resetPending ? "鎻愪氦涓?.." : resetVerifiedUntil ? "纭淇敼瀵嗙爜" : "璇峰厛鏍￠獙楠岃瘉鐮?}
+            </button>
+          </div>
+        </article>
+      </div>
+    </section>
+  );
+}
+
+export default function App() {
+  const [items, setItems] = useState<ProductRecord[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [activeSection, setActiveSection] = useState<"library" | "aiResults" | "apiKeys">("library");
+  const [view, setView] = useState<"grid" | "list">("grid");
+  const [sortBy, setSortBy] = useState<"capturedAt" | "priceMin">("capturedAt");
+  const [order, setOrder] = useState<"desc" | "asc">("desc");
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [detailRecordId, setDetailRecordId] = useState<string | null>(null);
+  const [manualTitle, setManualTitle] = useState("");
+  const [manualShopName, setManualShopName] = useState("鎵嬪姩涓婁紶");
+  const [manualDescription, setManualDescription] = useState("");
+  const [manualImageFile, setManualImageFile] = useState<File | null>(null);
+  const [manualImagePreviewUrl, setManualImagePreviewUrl] = useState("");
+  const [manualProductLink, setManualProductLink] = useState("");
+  const [manualSubmitting, setManualSubmitting] = useState(false);
+  const [videoProductInfoOverrides, setVideoProductInfoOverrides] = useState<Record<string, string>>({});
+  const [sidebarManualCollapse, setSidebarManualCollapse] = useState(false);
+  const [isCompact, setIsCompact] = useState(window.innerWidth <= 1024);
+  const pollingLocks = useRef<Set<string>>(new Set());
+  const secondPromptPollingLocks = useRef<Set<string>>(new Set());
+  const manualImageInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    const handler = () => setIsCompact(window.innerWidth <= 1024);
+    window.addEventListener("resize", handler);
+    return () => window.removeEventListener("resize", handler);
+  }, []);
+
+  useEffect(() => {
+    if (!manualImageFile) {
+      setManualImagePreviewUrl("");
+      return;
+    }
+    const objectUrl = URL.createObjectURL(manualImageFile);
+    setManualImagePreviewUrl(objectUrl);
+    return () => URL.revokeObjectURL(objectUrl);
+  }, [manualImageFile]);
+
+  const sidebarCollapsed = isCompact || sidebarManualCollapse;
+
+  const fetchProducts = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const response = await apiFetch(`/api/products?sortBy=${sortBy}&order=${order}`);
+      if (!response.ok) {
+        throw new Error(`璇锋眰澶辫触: ${response.status}`);
+      }
+      const json = (await response.json()) as ApiListResponse;
+      const nextItems = Array.isArray(json.items) ? json.items.map(normalizeProductRecord) : [];
+      setItems(nextItems);
+      setSelectedIds((prev) => prev.filter((id) => nextItems.some((item) => item.recordId === id)));
+      setDetailRecordId((prev) => {
+        if (prev && nextItems.some((item) => item.recordId === prev)) {
+          return prev;
+        }
+        return nextItems[0]?.recordId ?? null;
+      });
+    } catch (fetchError) {
+      setError(fetchError instanceof Error ? fetchError.message : "鍔犺浇澶辫触");
+    } finally {
+      setLoading(false);
+    }
+  }, [sortBy, order]);
+
+  useEffect(() => {
+    void fetchProducts();
+  }, [fetchProducts]);
+
+  const updateItemAnalysis = useCallback((recordId: string, analysis: ProductAnalysisState) => {
+    setItems((prev) =>
+      prev.map((item) => {
+        if (item.recordId !== recordId) {
+          return item;
+        }
+        return {
+          ...item,
+          analysis: normalizeAnalysisState(analysis)
+        };
+      })
+    );
+  }, []);
+
+  const updateItemSecondPrompt = useCallback((recordId: string, secondPromptGeneration: SecondPromptGenerationState) => {
+    setItems((prev) =>
+      prev.map((item) => {
+        if (item.recordId !== recordId) {
+          return item;
+        }
+        return {
+          ...item,
+          secondPromptGeneration: normalizeSecondPromptState(secondPromptGeneration)
+        };
+      })
+    );
+  }, []);
+
+  const updateItemVideoScript = useCallback((recordId: string, videoScriptGeneration: VideoScriptGenerationState) => {
+    setItems((prev) =>
+      prev.map((item) => {
+        if (item.recordId !== recordId) {
+          return item;
+        }
+        return {
+          ...item,
+          videoScriptGeneration: normalizeVideoScriptState(videoScriptGeneration)
+        };
+      })
+    );
+  }, []);
+
+  const handleChangeVideoProductInfo = useCallback((recordId: string, value: string) => {
+    setVideoProductInfoOverrides((prev) => ({
+      ...prev,
+      [recordId]: value
+    }));
+  }, []);
+
+  const updateItemVideoClipGeneration = useCallback((recordId: string, videoClipGeneration: VideoClipGenerationState) => {
+    setItems((prev) =>
+      prev.map((item) => {
+        if (item.recordId !== recordId) {
+          return item;
+        }
+        return {
+          ...item,
+          videoClipGeneration: normalizeVideoClipGenerationState(videoClipGeneration)
+        };
+      })
+    );
+  }, []);
+
+  const pollAnalysisStatus = useCallback(
+    async (recordId: string) => {
+      if (pollingLocks.current.has(recordId)) {
+        return;
+      }
+      pollingLocks.current.add(recordId);
+      try {
+        const response = await apiFetch(`/api/products/${encodeURIComponent(recordId)}/analyze/status`);
+        if (!response.ok) {
+          return;
+        }
+        const json = (await response.json()) as AnalyzeStatusResponse;
+        if (!json.analysis) {
+          return;
+        }
+        updateItemAnalysis(recordId, json.analysis);
+        if (json.videoScriptGeneration) {
+          updateItemVideoScript(recordId, json.videoScriptGeneration);
+        }
+        if (json.secondPromptGeneration) {
+          updateItemSecondPrompt(recordId, json.secondPromptGeneration);
+        }
+        if (json.videoClipGeneration) {
+          updateItemVideoClipGeneration(recordId, json.videoClipGeneration);
+        }
+      } finally {
+        pollingLocks.current.delete(recordId);
+      }
+    },
+    [updateItemAnalysis, updateItemSecondPrompt, updateItemVideoClipGeneration, updateItemVideoScript]
+  );
+
+  const pollSecondPromptStatus = useCallback(
+    async (recordId: string) => {
+      if (secondPromptPollingLocks.current.has(recordId)) {
+        return;
+      }
+      secondPromptPollingLocks.current.add(recordId);
+      try {
+        const response = await apiFetch(`/api/products/${encodeURIComponent(recordId)}/prompt-pack/status`);
+        if (!response.ok) {
+          return;
+        }
+        const json = (await response.json()) as SecondPromptStatusResponse;
+        if (!json.secondPromptGeneration) {
+          return;
+        }
+        updateItemSecondPrompt(recordId, json.secondPromptGeneration);
+      } finally {
+        secondPromptPollingLocks.current.delete(recordId);
+      }
+    },
+    [updateItemSecondPrompt]
+  );
+
+  const pendingRecordIds = useMemo(() => {
+    return items
+      .filter((item) => {
+        const analysisStatus = normalizeAnalysisState(item.analysis).status;
+        return analysisStatus === "queued" || analysisStatus === "processing";
+      })
+      .map((item) => item.recordId);
+  }, [items]);
+
+  useEffect(() => {
+    if (!pendingRecordIds.length) {
+      return;
+    }
+    const tick = () => {
+      pendingRecordIds.forEach((recordId) => {
+        void pollAnalysisStatus(recordId);
+      });
+    };
+    tick();
+    const timer = window.setInterval(tick, 2500);
+    return () => window.clearInterval(timer);
+  }, [pendingRecordIds, pollAnalysisStatus]);
+
+  const pendingSecondPromptRecordIds = useMemo(() => {
+    return items
+      .filter((item) => {
+        const status = normalizeSecondPromptState(item.secondPromptGeneration).status;
+        return status === "processing";
+      })
+      .map((item) => item.recordId);
+  }, [items]);
+
+  useEffect(() => {
+    if (!pendingSecondPromptRecordIds.length) {
+      return;
+    }
+    const tick = () => {
+      pendingSecondPromptRecordIds.forEach((recordId) => {
+        void pollSecondPromptStatus(recordId);
+      });
+    };
+    tick();
+    const timer = window.setInterval(tick, 2500);
+    return () => window.clearInterval(timer);
+  }, [pendingSecondPromptRecordIds, pollSecondPromptStatus]);
+
+  const pendingVideoClipRecordIds = useMemo(() => {
+    return items
+      .filter((item) =>
+        normalizeVideoClipGenerationState(item.videoClipGeneration).items.some(
+          (entry) => entry.status === "queued" || entry.status === "processing"
+        )
+      )
+      .map((item) => item.recordId);
+  }, [items]);
+
+  useEffect(() => {
+    if (!pendingVideoClipRecordIds.length) {
+      return;
+    }
+    const tick = () => {
+      pendingVideoClipRecordIds.forEach((recordId) => {
+        void pollAnalysisStatus(recordId);
+      });
+    };
+    tick();
+    const timer = window.setInterval(tick, 2500);
+    return () => window.clearInterval(timer);
+  }, [pendingVideoClipRecordIds, pollAnalysisStatus]);
+
+  useEffect(() => {
+    setVideoProductInfoOverrides((prev) => {
+      const validIds = new Set(items.map((item) => item.recordId));
+      const next: Record<string, string> = {};
+      let changed = false;
+      Object.entries(prev).forEach(([recordId, value]) => {
+        if (validIds.has(recordId)) {
+          next[recordId] = value;
+        } else {
+          changed = true;
+        }
+      });
+      return changed ? next : prev;
+    });
+  }, [items]);
+
+  const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
+  const detailItem = useMemo(() => items.find((item) => item.recordId === detailRecordId) ?? null, [items, detailRecordId]);
+  const analyzedCount = useMemo(
+    () => items.filter((item) => normalizeAnalysisState(item.analysis).status !== "idle").length,
+    [items]
+  );
+
+  const pageHeader = useMemo(() => {
+    if (activeSection === "library") {
+      return {
+        title: "鍟嗗搧搴?,
+        subtitle: `鍏?${items.length} 鏉″晢鍝佽褰昤
+      };
+    }
+    if (activeSection === "aiResults") {
+      return {
+        title: "AI鍒嗘瀽缁撴灉",
+        subtitle: `鍏?${analyzedCount} 鏉″垎鏋愯褰昤
+      };
+    }
+    return {
+      title: "API Key 绠＄悊",
+      subtitle: "缁熶竴绠＄悊鎵€鏈夎姹備娇鐢ㄧ殑 API Key 涓庨〉闈㈠瘑鐮?
+    };
+  }, [activeSection, analyzedCount, items.length]);
+
+  const handleOpenProduct = useCallback((recordId: string) => {
+    setDetailRecordId(recordId);
+    setActiveSection("library");
+  }, []);
+
+  const handleSelect = (recordId: string, checked: boolean) => {
+    setSelectedIds((prev) => {
+      if (checked) {
+        return [...new Set([...prev, recordId])];
+      }
+      return prev.filter((id) => id !== recordId);
+    });
+  };
+
+  const handleDeleteOne = async (recordId: string) => {
+    const response = await apiFetch(`/api/products/${encodeURIComponent(recordId)}`, { method: "DELETE" });
+    if (!response.ok) {
+      setError(`鍒犻櫎澶辫触: ${response.status}`);
+      return;
+    }
+    await fetchProducts();
+  };
+
+  const handleBatchDelete = async () => {
+    if (!selectedIds.length) {
+      return;
+    }
+    const response = await apiFetch(`/api/products/batch-delete`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ recordIds: selectedIds })
+    });
+    if (!response.ok) {
+      setError(`鎵归噺鍒犻櫎澶辫触: ${response.status}`);
+      return;
+    }
+    await fetchProducts();
+  };
+
+  const handleAnalyze = useCallback(
+    async (recordId: string) => {
+      setError("");
+      const response = await apiFetch(`/api/products/${encodeURIComponent(recordId)}/analyze`, {
+        method: "POST"
+      });
+      if (!response.ok) {
+        let detail = "";
+        try {
+          const json = await response.json();
+          detail = json?.message ? ` - ${String(json.message)}` : "";
+        } catch (_error) {
+          detail = "";
+        }
+        setError(`瑙﹀彂鍒嗘瀽澶辫触: ${response.status}${detail}`);
+        return;
+      }
+      const json = (await response.json()) as AnalyzeTriggerResponse;
+      updateItemAnalysis(recordId, {
+        status: "queued",
+        jobId: json.jobId,
+        error: null,
+        updatedAt: new Date().toISOString(),
+        result: null
+      });
+      void pollAnalysisStatus(recordId);
+    },
+    [pollAnalysisStatus, updateItemAnalysis]
+  );
+
+  const handleGenerateSecondPrompt = useCallback(
+    async (recordId: string) => {
+      setError("");
+      updateItemSecondPrompt(recordId, {
+        status: "processing",
+        jobId: null,
+        error: null,
+        updatedAt: new Date().toISOString(),
+        result: null
+      });
+
+      const response = await apiFetch(`/api/products/${encodeURIComponent(recordId)}/prompt-pack`, {
+        method: "POST"
+      });
+
+      let json: GenerateSecondPromptResponse | null = null;
+      try {
+        json = (await response.json()) as GenerateSecondPromptResponse;
+      } catch (_error) {
+        json = null;
+      }
+
+      if (!response.ok) {
+        const detail = json?.message ? ` - ${String(json.message)}` : "";
+        setError(`鍥捐瘝璇锋眰澶辫触: ${response.status}${detail}`);
+        if (json?.secondPromptGeneration) {
+          updateItemSecondPrompt(recordId, json.secondPromptGeneration);
+        } else {
+          updateItemSecondPrompt(recordId, {
+            status: "failed",
+            jobId: null,
+            error: `璇锋眰澶辫触: ${response.status}`,
+            updatedAt: new Date().toISOString(),
+            result: null
+          });
+        }
+        return;
+      }
+
+      if (!json?.secondPromptGeneration) {
+        if (json?.accepted && json?.jobId) {
+          updateItemSecondPrompt(recordId, {
+            status: "processing",
+            jobId: json.jobId,
+            error: null,
+            updatedAt: new Date().toISOString(),
+            result: null
+          });
+        } else {
+          setError("鍥捐瘝璇锋眰鎴愬姛浣嗘湭杩斿洖浠诲姟鐘舵€併€?);
+        }
+      } else {
+        updateItemSecondPrompt(recordId, json.secondPromptGeneration);
+      }
+      void pollSecondPromptStatus(recordId);
+    },
+    [pollSecondPromptStatus, updateItemSecondPrompt]
+  );
+
+  const handleGenerateVideoScript = useCallback(
+    async (recordId: string, options?: VideoScriptRequestOptions) => {
+      setError("");
+      updateItemVideoScript(recordId, {
+        status: "processing",
+        error: null,
+        updatedAt: new Date().toISOString(),
+        result: null
+      });
+
+      const productInfoText = safeText(options?.productInfoText ?? videoProductInfoOverrides[recordId]);
+      const requestInit: RequestInit = {
+        method: "POST"
+      };
+      if (productInfoText) {
+        requestInit.headers = { "Content-Type": "application/json" };
+        requestInit.body = JSON.stringify({
+          product_info_text: productInfoText,
+          product_description: productInfoText,
+          product_params: {
+            product_description: productInfoText,
+            product_info_text: productInfoText
+          }
+        });
+      }
+
+      const response = await apiFetch(`/api/products/${encodeURIComponent(recordId)}/video-script`, requestInit);
+      let json: GenerateVideoScriptResponse | null = null;
+      try {
+        json = (await response.json()) as GenerateVideoScriptResponse;
+      } catch (_error) {
+        json = null;
+      }
+
+      if (!response.ok) {
+        const detail = json?.message ? ` - ${String(json.message)}` : "";
+        setError(`鐭棰戞彁绀鸿瘝璇锋眰澶辫触: ${response.status}${detail}`);
+        if (json?.videoScriptGeneration) {
+          updateItemVideoScript(recordId, json.videoScriptGeneration);
+        } else {
+          updateItemVideoScript(recordId, {
+            status: "failed",
+            error: `璇锋眰澶辫触: ${response.status}`,
+            updatedAt: new Date().toISOString(),
+            result: null
+          });
+        }
+        return;
+      }
+
+      if (json?.videoScriptGeneration) {
+        updateItemVideoScript(recordId, json.videoScriptGeneration);
+      } else {
+        setError("鐭棰戞彁绀鸿瘝璇锋眰鎴愬姛浣嗘湭杩斿洖浠诲姟鐘舵€併€?);
+      }
+    },
+    [updateItemVideoScript, videoProductInfoOverrides]
+  );
+
+  const handleCreateManualProduct = useCallback(async () => {
+    setError("");
+    if (!manualImageFile) {
+      setError("璇峰厛涓婁紶鍟嗗搧鐧藉簳鍥俱€?);
+      return;
+    }
+    const description = safeText(manualDescription);
+    if (!description) {
+      setError("璇峰～鍐欏晢鍝佹弿杩般€?);
+      return;
+    }
+
+    setManualSubmitting(true);
+    try {
+      const imageDataUrl = await readFileAsDataUrl(manualImageFile);
+      const response = await apiFetch(`/api/products/manual-upload`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: safeText(manualTitle),
+          shopName: safeText(manualShopName) || "鎵嬪姩涓婁紶",
+          description,
+          imageDataUrl
+        })
+      });
+
+      let json: ManualUploadResponse | null = null;
+      try {
+        json = (await response.json()) as ManualUploadResponse;
+      } catch (_error) {
+        json = null;
+      }
+
+      if (!response.ok) {
+        const detail = safeText(json?.message);
+        throw new Error(`鎵嬪姩鍒涘缓澶辫触: ${response.status}${detail ? ` - ${detail}` : ""}`);
+      }
+
+      const createdItem = json?.item ? normalizeProductRecord(json.item) : null;
+      setManualProductLink(safeText(json?.productLink || createdItem?.url));
+      setManualTitle("");
+      setManualDescription("");
+      setManualImageFile(null);
+      if (manualImageInputRef.current) {
+        manualImageInputRef.current.value = "";
+      }
+
+      await fetchProducts();
+      if (createdItem?.recordId) {
+        setDetailRecordId(createdItem.recordId);
+      }
+    } catch (createError) {
+      setError(createError instanceof Error ? createError.message : "鎵嬪姩鍒涘缓澶辫触");
+    } finally {
+      setManualSubmitting(false);
+    }
+  }, [fetchProducts, manualDescription, manualImageFile, manualShopName, manualTitle]);
+
+  const handleCopyManualProductLink = useCallback(async () => {
+    const link = safeText(manualProductLink);
+    if (!link) {
+      return;
+    }
+    const copied = await copyText(link);
+    if (!copied) {
+      setError("閾炬帴澶嶅埗澶辫触锛岃鎵嬪姩澶嶅埗銆?);
+    }
+  }, [manualProductLink]);
+
+  return (
+    <div className="site-shell">
+      <header className="topbar">
+        <div className="brand">CaptureHub</div>
+        <input className="global-search" disabled placeholder="鍏ㄥ眬鎼滅储锛圥hase 2锛? />
+        <div className="topbar-tools">
+          <button className="ghost" type="button">
+            娑堟伅
+          </button>
+          <div className="avatar-slot">U</div>
+        </div>
+      </header>
+
+      <div className="content-shell">
+        <aside className={`sidebar ${sidebarCollapsed ? "collapsed" : ""}`}>
+          <button className="collapse-toggle" onClick={() => setSidebarManualCollapse((prev) => !prev)} type="button">
+            {sidebarCollapsed ? "灞曞紑" : "鏀惰捣"}
+          </button>
+          <nav>
+            <button
+              className={`menu-item menu-item-btn ${activeSection === "library" ? "active" : ""}`}
+              onClick={() => setActiveSection("library")}
+              type="button"
+            >
+              鍟嗗搧搴?
+            </button>
+            <button
+              className={`menu-item menu-item-btn ${activeSection === "aiResults" ? "active" : ""}`}
+              onClick={() => setActiveSection("aiResults")}
+              type="button"
+            >
+              AI鍒嗘瀽缁撴灉
+            </button>
+            <button
+              className={`menu-item menu-item-btn ${activeSection === "apiKeys" ? "active" : ""}`}
+              onClick={() => setActiveSection("apiKeys")}
+              type="button"
+            >
+              API Key绠＄悊
+            </button>
+            <a className="menu-item disabled">
+              鏁版嵁鍒嗘瀽 <span>鍗冲皢涓婄嚎</span>
+            </a>
+            <a className="menu-item disabled">
+              閲囪喘娓呭崟 <span>鍗冲皢涓婄嚎</span>
+            </a>
+            <a className="menu-item disabled">
+              浠锋牸鐩戞帶 <span>鍗冲皢涓婄嚎</span>
+            </a>
+          </nav>
+        </aside>
+
+        <main className="main">
+          <section className="page-head">
+            <div>
+              <h1>{pageHeader.title}</h1>
+              <p>{pageHeader.subtitle}</p>
+            </div>
+            {activeSection === "library" ? (
+              <div className="head-actions">
+                <button className="ghost" onClick={() => setView("grid")} type="button">
+                  缃戞牸
+                </button>
+                <button className="ghost" onClick={() => setView("list")} type="button">
+                  鍒楄〃
+                </button>
+                <button className="danger-btn" onClick={handleBatchDelete} type="button">
+                  鎵归噺鍒犻櫎({selectedIds.length})
+                </button>
+              </div>
+            ) : (
+              <div className="head-actions">
+                <button className="ghost" onClick={() => setActiveSection("library")} type="button">
+                  杩斿洖鍟嗗搧搴?
+                </button>
+              </div>
+            )}
+          </section>
+
+          {activeSection === "library" ? (
+            <>
+              <section className="toolbar">
+                <label>
+                  鎺掑簭瀛楁
+                  <select value={sortBy} onChange={(event) => setSortBy(event.target.value as "capturedAt" | "priceMin")}>
+                    <option value="capturedAt">鎶撳彇鏃堕棿</option>
+                    <option value="priceMin">浠锋牸</option>
+                  </select>
+                </label>
+                <label>
+                  椤哄簭
+                  <select value={order} onChange={(event) => setOrder(event.target.value as "desc" | "asc")}>
+                    <option value="desc">鏈€鏂?/ 鏈€楂?/option>
+                    <option value="asc">鏈€鏃?/ 鏈€浣?/option>
+                  </select>
+                </label>
+                <label className="placeholder-filter">
+                  鍒嗙被绛涢€?
+                  <input disabled placeholder="棰勭暀鍏ュ彛锛圥hase 2锛? />
+                </label>
+              </section>
+
+              <section className="manual-create-panel">
+                <div className="manual-create-head">
+                  <h3>鎵嬪姩鍒涘缓鍟嗗搧閾炬帴</h3>
+                  <p>鏃犻渶鎻掍欢锛屼笂浼犵櫧搴曞浘骞跺～鍐欏晢鍝佹弿杩板悗鍗冲彲鐢熸垚鍙闂晢鍝侀摼鎺ュ苟鍐欏叆鍟嗗搧搴撱€?/p>
+                </div>
+                <div className="manual-create-grid">
+                  <label className="manual-create-field">
+                    鍟嗗搧鏍囬
+                    <input
+                      maxLength={120}
+                      onChange={(event) => {
+                        setManualTitle(event.target.value);
+                        setManualProductLink("");
+                      }}
+                      placeholder="渚嬪锛氫究鎼哄紡涓嶉攬閽繚娓╂澂"
+                      type="text"
+                      value={manualTitle}
+                    />
+                  </label>
+                  <label className="manual-create-field">
+                    搴楅摵鍚嶇О
+                    <input
+                      maxLength={80}
+                      onChange={(event) => {
+                        setManualShopName(event.target.value);
+                        setManualProductLink("");
+                      }}
+                      placeholder="榛樿锛氭墜鍔ㄤ笂浼?
+                      type="text"
+                      value={manualShopName}
+                    />
+                  </label>
+                  <label className="manual-create-field manual-create-description">
+                    鍟嗗搧鎻忚堪
+                    <textarea
+                      maxLength={5000}
+                      onChange={(event) => {
+                        setManualDescription(event.target.value);
+                        setManualProductLink("");
+                      }}
+                      placeholder="濉啓鏉愯川銆佸昂瀵搞€佸姛鑳姐€侀€傜敤鍦烘櫙绛夊叧閿俊鎭€?
+                      rows={4}
+                      value={manualDescription}
+                    />
+                  </label>
+                  <label className="manual-create-field manual-create-upload">
+                    鍟嗗搧鐧藉簳鍥?
+                    <input
+                      accept="image/*"
+                      onChange={(event) => {
+                        const file = event.target.files?.[0] ?? null;
+                        if (file && !file.type.startsWith("image/")) {
+                          setError("浠呮敮鎸佷笂浼犲浘鐗囨枃浠躲€?);
+                          event.currentTarget.value = "";
+                          setManualImageFile(null);
+                          return;
+                        }
+                        setManualImageFile(file);
+                        setManualProductLink("");
+                      }}
+                      ref={manualImageInputRef}
+                      type="file"
+                    />
+                    {manualImagePreviewUrl ? (
+                      <img alt="涓婁紶棰勮" className="manual-upload-preview" src={manualImagePreviewUrl} />
+                    ) : (
+                      <div className="manual-upload-placeholder">灏氭湭閫夋嫨鍥剧墖</div>
+                    )}
+                    <small>{manualImageFile ? `${manualImageFile.name} 路 ${Math.ceil(manualImageFile.size / 1024)}KB` : "寤鸿娓呮櫚鐧藉簳鍥?}</small>
+                  </label>
+                </div>
+                <div className="manual-create-actions">
+                  <button className="primary-btn" disabled={manualSubmitting} onClick={() => void handleCreateManualProduct()} type="button">
+                    {manualSubmitting ? "鍒涘缓涓?.." : "涓婁紶骞跺垱寤哄晢鍝侀摼鎺?}
+                  </button>
+                  {manualProductLink ? (
+                    <>
+                      <a className="source-link manual-link" href={manualProductLink} rel="noreferrer" target="_blank">
+                        鎵撳紑鏂板缓鍟嗗搧閾炬帴
+                      </a>
+                      <button className="ghost" onClick={() => void handleCopyManualProductLink()} type="button">
+                        澶嶅埗閾炬帴
+                      </button>
+                    </>
+                  ) : null}
+                </div>
+              </section>
+
+              {error ? <div className="error-banner">{error}</div> : null}
+              {loading ? <div className="loading">鍔犺浇涓?..</div> : null}
+
+              {!loading && items.length === 0 ? (
+                <section className="empty-state">
+                  <div className="art"></div>
+                  <h2>杩樻病鏈夋姄鍙栦换浣曞晢鍝?/h2>
+                  <p>鍙€氳繃鎻掍欢鎷栨嫿 1688 鍟嗗搧鍥撅紝鎴栧湪涓婃柟鎵嬪姩涓婁紶鐧藉簳鍥句笌鍟嗗搧鎻忚堪寮€濮嬪垱寤恒€?/p>
+                </section>
+              ) : null}
+
+              {!loading && items.length > 0 ? (
+                <section className="library-layout">
+                  <div className="library-content">
+                    {view === "grid" ? (
+                      <section className="grid">
+                        {items.map((item) => (
+                          <ProductCard
+                            detailActive={detailRecordId === item.recordId}
+                            item={item}
+                            key={item.recordId}
+                            onAnalyze={handleAnalyze}
+                            onGenerateVideoScript={handleGenerateVideoScript}
+                            onGenerateSecondPrompt={handleGenerateSecondPrompt}
+                            onDelete={handleDeleteOne}
+                            onOpenDetail={setDetailRecordId}
+                            onSelect={handleSelect}
+                            selected={selectedSet.has(item.recordId)}
+                          />
+                        ))}
+                      </section>
+                    ) : (
+                      <section className="list">
+                        <div className="product-row header">
+                          <div>閫変腑</div>
+                          <div>鍥剧墖</div>
+                          <div>鍟嗗搧鏍囬</div>
+                          <div>浠锋牸</div>
+                          <div>搴楅摵</div>
+                          <div>AI鐘舵€?/div>
+                          <div>鎿嶄綔</div>
+                        </div>
+                        {items.map((item) => (
+                          <ProductRow
+                            detailActive={detailRecordId === item.recordId}
+                            item={item}
+                            key={item.recordId}
+                            onAnalyze={handleAnalyze}
+                            onGenerateVideoScript={handleGenerateVideoScript}
+                            onGenerateSecondPrompt={handleGenerateSecondPrompt}
+                            onDelete={handleDeleteOne}
+                            onOpenDetail={setDetailRecordId}
+                            onSelect={handleSelect}
+                            selected={selectedSet.has(item.recordId)}
+                          />
+                        ))}
+                      </section>
+                    )}
+                  </div>
+                  <div className="right-col">
+                    <ProductDetailsPanel item={detailItem} />
+                  </div>
+                </section>
+              ) : null}
+            </>
+          ) : activeSection === "aiResults" ? (
+            <>
+              {error ? <div className="error-banner">{error}</div> : null}
+              {loading ? <div className="loading">鍔犺浇涓?..</div> : null}
+              {!loading ? (
+                <AIResultsPage
+                  items={items}
+                  onAnalyze={handleAnalyze}
+                  onGenerateVideoScript={handleGenerateVideoScript}
+                  onGenerateSecondPrompt={handleGenerateSecondPrompt}
+                  onChangeVideoProductInfo={handleChangeVideoProductInfo}
+                  onOpenProduct={handleOpenProduct}
+                  videoProductInfoOverrides={videoProductInfoOverrides}
+                />
+              ) : null}
+            </>
+          ) : (
+            <ApiKeyManagerSection />
+          )}
+        </main>
+      </div>
+    </div>
+  );
+}
+

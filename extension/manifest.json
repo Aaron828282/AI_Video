@@ -1,0 +1,27 @@
+{
+  "manifest_version": 3,
+  "name": "1688 商品抓取助手",
+  "version": "0.1.0",
+  "description": "拖拽 1688 商品图片到侧边栏，自动抓取并上传商品信息",
+  "permissions": [
+    "sidePanel",
+    "activeTab",
+    "scripting",
+    "storage"
+  ],
+  "host_permissions": [
+    "*://*.1688.com/*",
+    "http://localhost:8787/*",
+    "http://*/api/*",
+    "https://*/api/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "action": {
+    "default_title": "1688 商品抓取助手"
+  }
+}

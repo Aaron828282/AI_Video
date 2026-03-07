@@ -1,0 +1,16 @@
+node_modules
+dist
+coverage
+.DS_Store
+*.log
+server/data/products.json
+server/.env
+server/data/api-key-settings.json
+release/
+.tmp_asar_unpack/
+.pack-app/
+.pack-app-run/
+.electron-cache/
+.electron-zips/
+.electron-dist/
+.npm-cache/

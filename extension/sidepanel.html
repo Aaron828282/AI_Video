@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>1688 商品助手</title>
+    <link rel="stylesheet" href="./sidepanel.css" />
+  </head>
+  <body>
+    <div class="panel-shell expanded" id="panelShell">
+      <button class="floating-tab" id="togglePanelBtn" type="button">商品助手</button>
+      <section class="panel-main">
+        <header class="panel-header">
+          <h1>1688 商品抓取</h1>
+          <p>把商品图拖到下方区域，即可抓取并上传</p>
+        </header>
+
+        <div class="drop-zone" id="dropZone">
+          <div class="drop-title">拖拽图片到这里</div>
+          <div class="drop-hint">支持从 1688 商品页直接拖拽主图或详情图</div>
+        </div>
+
+        <div class="status-box" id="statusBox" data-state="idle">
+          <span class="status-dot"></span>
+          <span id="statusText">等待拖拽</span>
+          <button id="retryBtn" class="retry-btn hidden" type="button">重试上传</button>
+        </div>
+
+        <section class="latest-card hidden" id="latestCard">
+          <img id="latestImage" alt="商品图" />
+          <div class="meta">
+            <a id="latestTitle" target="_blank" rel="noreferrer"></a>
+            <div id="latestPrice"></div>
+            <div id="latestShop"></div>
+            <div id="latestCapturedAt"></div>
+          </div>
+        </section>
+
+        <section class="recent-list-wrap">
+          <div class="recent-title">最近抓取</div>
+          <ul id="recentList" class="recent-list"></ul>
+        </section>
+      </section>
+    </div>
+
+    <script src="./sidepanel.js"></script>
+  </body>
+</html>
+

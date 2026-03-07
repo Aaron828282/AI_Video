@@ -1,0 +1,57 @@
+[
+  {
+    "id": "户外运动",
+    "name": "户外运动",
+    "path": [
+      "户外运动"
+    ],
+    "parentId": null,
+    "active": true,
+    "source": "website-sync",
+    "updatedAt": "2026-02-24T02:27:18.072Z"
+  },
+  {
+    "id": "运动",
+    "name": "运动",
+    "path": [
+      "运动"
+    ],
+    "parentId": null,
+    "active": false,
+    "source": "website-sync",
+    "updatedAt": "2026-02-24T02:27:18.072Z"
+  },
+  {
+    "id": "__unassigned__",
+    "name": "未归类",
+    "path": [
+      "未归类"
+    ],
+    "parentId": null,
+    "active": false,
+    "source": "system",
+    "updatedAt": "2026-02-24T02:27:18.072Z"
+  },
+  {
+    "id": "五金",
+    "name": "五金",
+    "path": [
+      "五金"
+    ],
+    "parentId": null,
+    "active": true,
+    "source": "website-sync",
+    "updatedAt": "2026-02-24T02:27:18.072Z"
+  },
+  {
+    "id": "户外运动>手套",
+    "name": "户外运动>手套",
+    "path": [
+      "户外运动>手套"
+    ],
+    "parentId": null,
+    "active": true,
+    "source": "website-sync",
+    "updatedAt": "2026-02-24T02:27:18.072Z"
+  }
+]
