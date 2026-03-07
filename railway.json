@@ -1,0 +1,21 @@
+{
+  "$schema": "https://railway.com/railway.schema.json",
+  "build": {
+    "builder": "RAILPACK",
+    "watchPatterns": [
+      "server/**",
+      "web/**",
+      "extension/**",
+      "package.json",
+      "package-lock.json"
+    ],
+    "buildCommand": "npm ci && npm --workspace web run build"
+  },
+  "deploy": {
+    "startCommand": "npm --workspace server run start",
+    "healthcheckPath": "/api/health",
+    "healthcheckTimeout": 300,
+    "restartPolicyType": "ALWAYS",
+    "requiredMountPath": "/data"
+  }
+}
