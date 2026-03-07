@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "1688 商品抓取助手",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "拖拽 1688 商品图片到侧边栏，自动抓取并上传商品信息",
   "permissions": [
     "sidePanel",

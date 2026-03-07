@@ -1,5 +1,11 @@
 const API_BASE_STORAGE_KEY = "apiBase";
-const DEFAULT_API_BASE = "http://127.0.0.1:8790";
+const DEFAULT_API_BASE = "https://ai-auto-1688-server-production.up.railway.app";
+const LEGACY_LOCAL_API_BASES = new Set([
+  "http://localhost:5173",
+  "http://127.0.0.1:5173",
+  "http://localhost:8790",
+  "http://127.0.0.1:8790"
+]);
 const RECENT_KEY = "recentRecords";
 const MAX_RECENT = 20;
 let apiBase = DEFAULT_API_BASE;
@@ -32,6 +38,14 @@ function buildApiUrl(pathname) {
   const normalizedPath = String(pathname || "").startsWith("/") ? pathname : `/${String(pathname || "")}`;
   const base = normalizeApiBase(apiBase);
   return `${base}${normalizedPath}`;
+}
+
+function shouldMigrateApiBase(base) {
+  const normalized = normalizeApiBase(base).toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+  return LEGACY_LOCAL_API_BASES.has(normalized);
 }
 
 function setStatus(state, text, { showRetry = false } = {}) {
@@ -684,7 +698,13 @@ function bindCollapse() {
 async function init() {
   try {
     const config = await chrome.storage.sync.get(API_BASE_STORAGE_KEY);
-    apiBase = normalizeApiBase(config?.[API_BASE_STORAGE_KEY]) || DEFAULT_API_BASE;
+    const storedApiBase = normalizeApiBase(config?.[API_BASE_STORAGE_KEY]);
+    if (!storedApiBase || shouldMigrateApiBase(storedApiBase)) {
+      apiBase = DEFAULT_API_BASE;
+      await chrome.storage.sync.set({ [API_BASE_STORAGE_KEY]: apiBase });
+    } else {
+      apiBase = storedApiBase;
+    }
   } catch (_error) {
     apiBase = DEFAULT_API_BASE;
   }

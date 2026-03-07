@@ -40,11 +40,19 @@
 
 - 网站内入口：左侧菜单 `下载插件`，或 `使用文档` 页面内的“下载插件（ZIP）”按钮。
 - 直接下载地址：`https://<你的域名>/downloads/ai-auto-1688-extension.zip`
+- 默认上传地址：插件默认上传到 `https://ai-auto-1688-server-production.up.railway.app`。
+- 自动修正：若本地残留了 `http://localhost:5173` / `http://127.0.0.1:5173` 等旧配置，插件会在启动时自动迁移到线上地址。
 - 安装步骤：
   1. 下载 ZIP 并解压到本地目录。
   2. 打开 `chrome://extensions/`（或 Edge 扩展页）。
   3. 开启“开发者模式”。
   4. 点击“加载已解压的扩展程序”并选择解压后的 `extension` 目录。
+
+如需切回本地开发服务，可在浏览器扩展上下文执行：
+
+```js
+chrome.storage.sync.set({ apiBase: "http://127.0.0.1:8790" });
+```
 
 ## 2. 项目结构
 
