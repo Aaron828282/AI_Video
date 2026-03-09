@@ -78,6 +78,57 @@ body {
   font-size: 12px;
 }
 
+.api-base-card {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #fff;
+  padding: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.api-base-title {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.api-base-controls {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+
+.api-base-controls select,
+.api-base-controls input {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 7px 9px;
+  font-size: 12px;
+  color: var(--text);
+  background: #f9fbff;
+}
+
+.api-base-controls button {
+  border: none;
+  border-radius: 999px;
+  padding: 7px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #fff;
+  background: var(--primary);
+  cursor: pointer;
+}
+
+.api-base-hint {
+  min-height: 16px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.api-base-hint.error {
+  color: var(--error);
+}
+
 .drop-zone {
   min-height: 136px;
   border: 2px dashed var(--border);
@@ -253,4 +304,3 @@ body {
     opacity: 1;
   }
 }
-

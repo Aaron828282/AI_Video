@@ -5,6 +5,7 @@ type FeatureItem = {
 };
 
 type UsageGuideSectionProps = {
+  exeDownloadUrl: string;
   extensionDownloadUrl: string;
 };
 
@@ -40,7 +41,7 @@ const TIPS = [
   "视频片段生成是异步任务，可在 AI分析结果页持续查看状态。"
 ];
 
-export function UsageGuideSection({ extensionDownloadUrl }: UsageGuideSectionProps) {
+export function UsageGuideSection({ exeDownloadUrl, extensionDownloadUrl }: UsageGuideSectionProps) {
   return (
     <section className="usage-guide-page">
       <article className="usage-guide-intro">
@@ -49,11 +50,14 @@ export function UsageGuideSection({ extensionDownloadUrl }: UsageGuideSectionPro
       </article>
 
       <article className="usage-guide-card usage-guide-download-panel">
-        <h4>下载与安装插件</h4>
-        <p>首次使用请先下载浏览器插件压缩包，解压后在 Chrome/Edge 扩展管理页加载已解压目录。</p>
+        <h4>客户端下载</h4>
+        <p>可按需下载浏览器插件或 Windows EXE。插件用于抓取上传，EXE 用于本地一体化运行。</p>
         <div className="usage-guide-download-actions">
           <a className="primary-btn usage-guide-download-link" href={extensionDownloadUrl} rel="noreferrer" target="_blank">
             下载插件（ZIP）
+          </a>
+          <a className="primary-btn usage-guide-download-link" href={exeDownloadUrl} rel="noreferrer" target="_blank">
+            下载客户端（EXE）
           </a>
         </div>
       </article>

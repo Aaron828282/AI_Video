@@ -1,10 +1,10 @@
 const API_BASE_STORAGE_KEY = "apiBase";
-const DEFAULT_API_BASE = "https://ai-auto-1688-server-production.up.railway.app";
+const ONLINE_API_BASE = "https://ai-auto-1688-server-production.up.railway.app";
+const LOCAL_API_BASE = "http://127.0.0.1:8790";
+const DEFAULT_API_BASE = ONLINE_API_BASE;
 const LEGACY_LOCAL_API_BASES = new Set([
   "http://localhost:5173",
-  "http://127.0.0.1:5173",
-  "http://localhost:8790",
-  "http://127.0.0.1:8790"
+  "http://127.0.0.1:5173"
 ]);
 const RECENT_KEY = "recentRecords";
 const MAX_RECENT = 20;
@@ -16,6 +16,10 @@ const dropZone = document.getElementById("dropZone");
 const statusBox = document.getElementById("statusBox");
 const statusText = document.getElementById("statusText");
 const retryBtn = document.getElementById("retryBtn");
+const apiBaseModeSelect = document.getElementById("apiBaseMode");
+const apiBaseInput = document.getElementById("apiBaseInput");
+const apiBaseSaveBtn = document.getElementById("apiBaseSaveBtn");
+const apiBaseHint = document.getElementById("apiBaseHint");
 const latestCard = document.getElementById("latestCard");
 const latestImage = document.getElementById("latestImage");
 const latestTitle = document.getElementById("latestTitle");
@@ -46,6 +50,53 @@ function shouldMigrateApiBase(base) {
     return false;
   }
   return LEGACY_LOCAL_API_BASES.has(normalized);
+}
+
+function inferApiBaseMode(base) {
+  const normalized = normalizeApiBase(base).toLowerCase();
+  if (normalized === ONLINE_API_BASE.toLowerCase()) {
+    return "online";
+  }
+  if (normalized === LOCAL_API_BASE.toLowerCase() || normalized === "http://localhost:8790") {
+    return "local";
+  }
+  return "custom";
+}
+
+function setApiBaseHint(text, isError = false) {
+  if (!apiBaseHint) {
+    return;
+  }
+  apiBaseHint.textContent = text;
+  apiBaseHint.classList.toggle("error", Boolean(isError));
+}
+
+function syncApiBaseControls(base) {
+  if (!apiBaseModeSelect || !apiBaseInput) {
+    return;
+  }
+  const mode = inferApiBaseMode(base);
+  apiBaseModeSelect.value = mode;
+  if (mode === "online") {
+    apiBaseInput.value = ONLINE_API_BASE;
+  } else if (mode === "local") {
+    apiBaseInput.value = LOCAL_API_BASE;
+  } else {
+    apiBaseInput.value = normalizeApiBase(base);
+  }
+}
+
+async function persistApiBase(nextBase) {
+  const normalized = normalizeApiBase(nextBase);
+  if (!/^https?:\/\//i.test(normalized)) {
+    setApiBaseHint("地址格式错误，请输入 http:// 或 https:// 开头的地址。", true);
+    return false;
+  }
+  apiBase = normalized;
+  await chrome.storage.sync.set({ [API_BASE_STORAGE_KEY]: apiBase });
+  syncApiBaseControls(apiBase);
+  setApiBaseHint(`当前接收地址：${apiBase}`);
+  return true;
 }
 
 function setStatus(state, text, { showRetry = false } = {}) {
@@ -695,6 +746,30 @@ function bindCollapse() {
   });
 }
 
+function bindApiBaseControls() {
+  if (!apiBaseModeSelect || !apiBaseInput || !apiBaseSaveBtn) {
+    return;
+  }
+
+  apiBaseModeSelect.addEventListener("change", () => {
+    if (apiBaseModeSelect.value === "online") {
+      apiBaseInput.value = ONLINE_API_BASE;
+    } else if (apiBaseModeSelect.value === "local") {
+      apiBaseInput.value = LOCAL_API_BASE;
+    }
+  });
+
+  apiBaseSaveBtn.addEventListener("click", async () => {
+    const mode = apiBaseModeSelect.value;
+    const candidate = mode === "online" ? ONLINE_API_BASE : mode === "local" ? LOCAL_API_BASE : apiBaseInput.value;
+    try {
+      await persistApiBase(candidate);
+    } catch (_error) {
+      setApiBaseHint("保存失败，请稍后重试。", true);
+    }
+  });
+}
+
 async function init() {
   try {
     const config = await chrome.storage.sync.get(API_BASE_STORAGE_KEY);
@@ -708,6 +783,9 @@ async function init() {
   } catch (_error) {
     apiBase = DEFAULT_API_BASE;
   }
+  syncApiBaseControls(apiBase);
+  setApiBaseHint(`当前接收地址：${apiBase}`);
+  bindApiBaseControls();
   bindCollapse();
   bindDragEvents();
   bindRetry();
