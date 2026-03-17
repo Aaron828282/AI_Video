@@ -1461,7 +1461,7 @@ function ProductDetailsPanel(props: { item: ProductRecord | null }) {
       ? `${toCurrency(item.priceMin)} - ${toCurrency(item.priceMax)}`
       : toCurrency(item.priceMin);
   const hasSourceLink = isHttpUrl(item.url);
-  const sourceLinkLabel = item.source === "chrome-extension" ? "打开 1688 原始链接" : "打开商品链接";
+  const sourceLinkLabel = "打开商品链接";
 
   return (
     <aside className="details-panel">
@@ -4516,3 +4516,4 @@ export default function App() {
     </div>
   );
 }
+

@@ -1,10 +1,10 @@
-# AI Video (1688 商品采集与 AI 生成工作台)
+﻿# AI Video（1688/淘宝/天猫/拼多多 商品采集与 AI 生成工作台）
 
-一个 `extension + server + web` 的一体化项目，用于从 1688 商品页采集商品信息，并在后台完成 AI 分析、图文提示词生成、短视频脚本与视频片段生成。
+一个 `extension + server + web` 的一体化项目，用于从 1688/淘宝/天猫/拼多多 商品页采集商品信息，并在后台完成 AI 分析、图文提示词生成、短视频脚本与视频片段生成。
 
 ## 1. 项目能力概览
 
-- 浏览器插件拖拽采集：在 1688 商品页通过侧边栏拖拽图片触发采集。
+- 浏览器插件拖拽采集：在 1688/淘宝/天猫/拼多多 商品页通过侧边栏拖拽图片触发采集。
 - 商品数据管理：Web 页面查看、排序、删除、批量删除商品记录。
 - 手动上传：支持上传白底图 + 商品描述进行手动建档。
 - 一阶段 AI 分析：生成材质、外观、颜色、规格、卖点、采购风险等结构化结果。
@@ -39,8 +39,8 @@
 ### 1.4 客户端下载与安装
 
 - 网站内入口：左侧菜单 `下载插件` / `下载EXE`，或 `使用文档` 页面内的下载按钮。
-- 插件下载地址：`https://<你的域名>/downloads/ai-auto-1688-extension.zip`
-- EXE 下载地址：`https://<你的域名>/downloads/AI_Auto_1688_latest.exe`
+- 插件下载地址：`https://ai-auto-1688-server-production.up.railway.app/downloads/ai-auto-1688-extension.zip`
+- EXE 下载地址：`https://ai-auto-1688-server-production.up.railway.app/downloads/AI_Auto_1688_latest.exe`
 - 默认上传地址：插件默认上传到 `https://ai-auto-1688-server-production.up.railway.app`。
 - 地址切换：可在插件面板顶部“接收地址切换”中选择 `线上站点` / `本地站点（127.0.0.1:8790）` / `自定义地址` 并保存。
 - 自动修正：若残留了 `http://localhost:5173` / `http://127.0.0.1:5173` 等错误旧配置，插件会在启动时自动迁移到线上地址。
@@ -127,7 +127,7 @@ npm run dev:web
 2. 开启「开发者模式」
 3. 点击「加载已解压的扩展程序」
 4. 选择 `extension/` 目录
-5. 打开插件侧边栏并在 1688 商品页测试拖拽采集
+5. 打开插件侧边栏并在 1688/淘宝/天猫/拼多多 商品页测试拖拽采集
 
 ## 5. 关键环境变量说明（server/.env）
 
@@ -236,3 +236,7 @@ npm run build:exe
 
 - `docs/AI_ANALYSIS_SETUP.md`
 - `docs/EXE_PACKAGING.md`
+
+
+
+

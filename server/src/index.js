@@ -1335,7 +1335,9 @@ function extractProductId(url, fallbackId) {
   const matched =
     source.match(/offer\/(\d+)\.html/i) ||
     source.match(/detail\/(\d+)\.html/i) ||
-    source.match(/[?&]id=(\d+)/i);
+    source.match(/[?&]id=(\d+)/i) ||
+    source.match(/[?&]item_id=(\d+)/i) ||
+    source.match(/[?&]goods_id=(\d+)/i);
   return matched ? matched[1] : `unknown_${Date.now()}`;
 }
 
@@ -5817,3 +5819,4 @@ app.listen(PORT, () => {
     console.error("restoreVideoClipQueueFromStore failed:", error);
   });
 });
+
