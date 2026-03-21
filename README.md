@@ -9,7 +9,8 @@
 - 手动上传：支持上传白底图 + 商品描述进行手动建档。
 - 一阶段 AI 分析：生成材质、外观、颜色、规格、卖点、采购风险等结构化结果。
 - 二阶段图词生成：生成主图/详情图提示词包（含多市场语言配置）。
-- 视频脚本生成：基于分析结果生成短视频脚本与镜头提示。
+- 视频脚本生成：基于分析结果生成短视频脚本与镜头提示，并自动解析模型外层响应包装。
+- 短视频调试与校验：支持保留原始模型响应、查看结构化结果，并对语言规则进行内容级校验。
 - 视频片段任务：调用视频接口创建任务、轮询状态、返回视频地址。
 - API Key 管理：内置管理页密码登录、密钥与模型参数配置、密码重置。
 - 桌面端打包：支持 Electron 打包为 Windows 可执行文件。
@@ -30,13 +31,23 @@
 4. 在分析完成后点击“图词请求”，生成主图与详情图提示词。
 5. 需要短视频时点击“短视频”，再到 `AI分析结果` 查看脚本并触发视频片段生成。
 
-### 1.3 常见操作指引
+### 1.3 短视频能力补充说明
+
+- 短视频脚本接口会自动从模型外层响应中提取内层 JSON，并落库为结构化 `scripts` 结果。
+- 调试请求会保留最近一次原始响应信息，便于对照模型原文与程序实际消费结果。
+- 当前短视频语言规则已统一为：
+  - `digital_human_base_image_prompt` / `image_prompt`：英文
+  - `video_prompt`：镜头、场景、动作、风格、音频说明使用英文
+  - `On-screen dialogue` / `Voiceover` / 面向观众的画面文字：使用 `in_image_text_language`
+- 系统会对短视频结果执行内容级校验，并在结果中保存 `validation_warnings` 供调试使用。
+
+### 1.4 常见操作指引
 
 - 删除无效数据：在 `商品库` 勾选商品后使用“批量删除”。
 - 查看单个商品详情：在 `商品库` 点击商品标题或卡片，右侧会显示详情面板。
 - 检查任务进度：在 `AI分析结果` 页面查看状态标签（分析 / 图词 / 短视频 / 视频片段）。
 
-### 1.4 客户端下载与安装
+### 1.5 客户端下载与安装
 
 - 网站内入口：左侧菜单 `下载插件` / `下载EXE`，或 `使用文档` 页面内的下载按钮。
 - 插件下载地址：`https://ai-auto-1688-server-production.up.railway.app/downloads/ai-auto-1688-extension.zip`
@@ -168,6 +179,7 @@ npm run dev:web
 - `POST /api/products/:recordId/analyze`：触发一阶段分析
 - `POST /api/products/:recordId/prompt-pack`：触发图词生成
 - `POST /api/products/:recordId/video-script`：触发短视频脚本生成
+- `POST /api/products/:recordId/video-script/debug`：触发短视频调试请求并保留原始响应
 - `POST /api/products/:recordId/video-clips/generate`：触发视频片段生成
 
 ## 8. 插件 API 地址配置（生产环境）
@@ -215,6 +227,11 @@ npm run build:exe
 ```
 
 产物位于 `release/` 目录。
+
+说明：
+- 打包前会自动执行 `npm run build:web`
+- 默认生成 Windows Portable EXE
+- 若本地缓存缺失，首次打包可能因 Electron 相关资源准备而耗时更长
 
 ## 11. 常用脚本
 

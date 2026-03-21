@@ -192,8 +192,8 @@ const MAX_MANUAL_DESCRIPTION_LENGTH = Number.isFinite(Number(process.env.MAX_MAN
   ? Math.max(50, Math.min(12000, Math.floor(Number(process.env.MAX_MANUAL_DESCRIPTION_LENGTH))))
   : 5000;
 const PRODUCT_CONSISTENCY_RULE =
-  "若提示词与参考图中的产品外观存在差别，必须优先以参考图外观为准进行绘制，并严格保持产品主体一致性。";
-const PRODUCT_CONSISTENCY_REQUIREMENT_LINE = `一致性要求: ${PRODUCT_CONSISTENCY_RULE}`;
+  "If the prompt conflicts with the product appearance in the reference image, always follow the reference image and keep the product identity fully consistent.";
+const PRODUCT_CONSISTENCY_REQUIREMENT_LINE = `Consistency requirement: ${PRODUCT_CONSISTENCY_RULE}`;
 const DETAIL_PROMPT_ASPECT_RATIOS = new Set(["1:1", "9:16"]);
 const DEFAULT_PROMPT_PACK_TARGET_MARKET = "United States";
 const DEFAULT_PROMPT_PACK_PROMPT_LANGUAGE = String(process.env.PROMPT_PACK_PROMPT_LANGUAGE || "English").trim() || "English";
@@ -204,7 +204,9 @@ const SHORT_VIDEO_PROMPT_BASE_OPENING = [
   "任务目标：基于图词请求阶段产出的产品细节信息（外观/材质/形状/尺寸）、第一次分析结果和《AI视频生成规范》文档，生成可直接执行的 JSON。",
   "请严格遵守文档中的输入约束、镜头结构、音频规范与输出 schema。",
   "必须只输出 JSON，不要输出 Markdown、解释、注释或额外前后缀。",
-  "硬性语言约束：所有提示词字段（如 digital_human_base_image_prompt、image_prompt、video_prompt）必须使用英文，严禁出现中文。"
+  "硬性语言约束：digital_human_base_image_prompt 与 image_prompt 必须使用英文；video_prompt 中除面向观众的对白、旁白、字幕、画面文字外，其余镜头/场景/风格/音频说明必须使用英文。",
+  "硬性语言约束：只有面向观众的对白、旁白、字幕、画面文字可以使用目标语言。",
+  "硬性语言约束：如果需要画面中的招牌、字幕卡、包装文案等目标语言文字，请在 image_prompt 中仅用英文描述其位置和作用，不要直接写出该目标语言文本本身。"
 ];
 const VIDEO_AGENT_OUTPUT_WRAPPER_KEYS = new Set([
   "product_info",
@@ -1986,7 +1988,8 @@ function buildShortVideoPromptOpening(localeConfig) {
     ...SHORT_VIDEO_PROMPT_BASE_OPENING,
     `硬性市场约束：人物设定、生活场景、消费偏好、镜头风格必须与目标市场 ${locale.targetMarket} 一致。`,
     `硬性语言约束：视频中所有人物对白、画面文字、旁白、字幕等面向观众的语言必须是 ${locale.inImageTextLanguage}。`,
-    `硬性语言约束：禁止混入任何非 ${locale.inImageTextLanguage} 的面向观众语言。`
+    `硬性语言约束：禁止混入任何非 ${locale.inImageTextLanguage} 的面向观众语言。`,
+    "硬性语言约束：不要在 image_prompt 或 digital_human_base_image_prompt 中输出中文或其他非英文字符；video_prompt 中仅对白、旁白、字幕、画面文字可使用目标语言。"
   ].join("\n");
 }
 
@@ -3297,6 +3300,177 @@ function normalizeShortVideoOutputPayload(input) {
   );
 }
 
+function extractStructuredShortVideoOutputPayload(input) {
+  const parsed = parseJsonObject(input);
+  if (!parsed) {
+    return null;
+  }
+  if (hasVideoAgentStructuredOutput(parsed)) {
+    return parsed;
+  }
+  const modelText = extractOpenAiLikeTextContent(parsed);
+  const parsedModelOutput = parseJsonObject(modelText);
+  if (parsedModelOutput && hasVideoAgentStructuredOutput(parsedModelOutput)) {
+    return parsedModelOutput;
+  }
+  return parsedModelOutput || null;
+}
+
+function containsCjkCharacters(input) {
+  return /[\u3400-\u9fff]/u.test(safeText(input));
+}
+
+function looksEnglishLanguageLabel(input) {
+  return /\benglish\b/i.test(safeText(input));
+}
+
+function looksChineseLanguageLabel(input) {
+  return /(中文|汉语|普通话|chinese|mandarin|cantonese)/i.test(safeText(input));
+}
+
+function extractVideoPromptAudienceSections(prompt) {
+  const text = safeText(prompt);
+  if (!text) {
+    return {
+      dialogue: "",
+      voiceover: "",
+      scrubbed: ""
+    };
+  }
+  let scrubbed = text;
+  let dialogue = "";
+  let voiceover = "";
+  const dialogueMatch = text.match(/On-screen dialogue:\s*([\s\S]*?)\n\s*Voiceover:/i);
+  if (dialogueMatch) {
+    dialogue = safeText(dialogueMatch[1]);
+    scrubbed = scrubbed.replace(dialogueMatch[1], "__AUDIENCE_DIALOGUE_CONTENT__");
+  }
+  const voiceoverMatch = text.match(/Voiceover:\s*([\s\S]*?)\n\s*SFX\s*&\s*Ambient:/i);
+  if (voiceoverMatch) {
+    voiceover = safeText(voiceoverMatch[1]);
+    scrubbed = scrubbed.replace(voiceoverMatch[1], "__AUDIENCE_VOICEOVER_CONTENT__");
+  }
+  return {
+    dialogue,
+    voiceover,
+    scrubbed
+  };
+}
+
+function replaceCjkSegmentsWithPlaceholder(input, placeholder) {
+  const source = safeText(input);
+  const token = safeText(placeholder, "audience-facing localized text");
+  if (!source) {
+    return "";
+  }
+  return source.replace(/[\u3400-\u9fff][\u3400-\u9fff0-9，。！？；：“”"'、（）()《》【】\s-]*/gu, token);
+}
+
+function sanitizeVideoPromptNonAudienceText(prompt, localeConfig = null) {
+  const text = safeText(prompt);
+  if (!text) {
+    return text;
+  }
+  const locale = normalizePromptPackLocaleConfig(localeConfig);
+  const sections = extractVideoPromptAudienceSections(text);
+  const placeholder = `audience-facing ${locale.inImageTextLanguage} text`;
+  const sanitized = replaceCjkSegmentsWithPlaceholder(sections.scrubbed, placeholder);
+  return sanitized
+    .replace("__AUDIENCE_DIALOGUE_CONTENT__", sections.dialogue)
+    .replace("__AUDIENCE_VOICEOVER_CONTENT__", sections.voiceover);
+}
+
+function sanitizeShortVideoOutputPayloadLanguage(outputPayload, localeConfig = null) {
+  const normalized = normalizeShortVideoOutputPayload(outputPayload);
+  const locale = normalizePromptPackLocaleConfig(localeConfig);
+  const placeholder = `audience-facing ${locale.inImageTextLanguage} text`;
+  let sanitizedSegments = 0;
+  const scripts = toArray(normalized?.scripts).map((script) => {
+    const nextScript = {
+      ...safeObject(script)
+    };
+    const digitalHumanPrompt = safeText(nextScript.digital_human_base_image_prompt);
+    const sanitizedDigitalHumanPrompt = replaceCjkSegmentsWithPlaceholder(digitalHumanPrompt, placeholder);
+    if (sanitizedDigitalHumanPrompt !== digitalHumanPrompt) {
+      sanitizedSegments += 1;
+      nextScript.digital_human_base_image_prompt = sanitizedDigitalHumanPrompt;
+    }
+    nextScript.shots = toArray(nextScript.shots).map((shot) => {
+      const nextShot = {
+        ...safeObject(shot)
+      };
+      const imagePrompt = safeText(nextShot.image_prompt);
+      const sanitizedImagePrompt = replaceCjkSegmentsWithPlaceholder(imagePrompt, placeholder);
+      if (sanitizedImagePrompt !== imagePrompt) {
+        sanitizedSegments += 1;
+        nextShot.image_prompt = sanitizedImagePrompt;
+      }
+      const videoPrompt = safeText(nextShot.video_prompt);
+      const sanitizedVideoPrompt = sanitizeVideoPromptNonAudienceText(videoPrompt, locale);
+      if (sanitizedVideoPrompt !== videoPrompt) {
+        sanitizedSegments += 1;
+        nextShot.video_prompt = sanitizedVideoPrompt;
+      }
+      return nextShot;
+    });
+    return nextScript;
+  });
+  return {
+    ...normalized,
+    scripts,
+    production_notes: {
+      ...(safeObject(normalized?.production_notes) || {}),
+      language_sanitization: {
+        applied: sanitizedSegments > 0,
+        sanitized_segments: sanitizedSegments,
+        placeholder
+      }
+    }
+  };
+}
+
+function buildShortVideoContentWarnings(outputPayload, localeConfig = null) {
+  const normalized = normalizeShortVideoOutputPayload(outputPayload);
+  const locale = normalizePromptPackLocaleConfig(localeConfig);
+  const warnings = [];
+  const scripts = toArray(normalized?.scripts);
+  scripts.forEach((script, scriptIndex) => {
+    const scriptLabel = safeText(script?.script_id, `script_${String(scriptIndex + 1).padStart(2, "0")}`);
+    if (containsCjkCharacters(script?.digital_human_base_image_prompt)) {
+      warnings.push(`${scriptLabel}: digital_human_base_image_prompt should stay English-only.`);
+    }
+    toArray(script?.shots).forEach((shot, shotIndex) => {
+      const shotLabel = safeText(shot?.shot_id, `shot_${String(shotIndex + 1).padStart(2, "0")}`);
+      const imagePrompt = safeText(shot?.image_prompt);
+      const videoPrompt = safeText(shot?.video_prompt);
+      if (containsCjkCharacters(imagePrompt)) {
+        warnings.push(`${scriptLabel}/${shotLabel}: image_prompt should stay English-only.`);
+      }
+      const sections = extractVideoPromptAudienceSections(videoPrompt);
+      if (containsCjkCharacters(sections.scrubbed)) {
+        warnings.push(`${scriptLabel}/${shotLabel}: video_prompt contains CJK characters outside audience-facing dialogue or voiceover blocks.`);
+      }
+      if (looksEnglishLanguageLabel(locale.inImageTextLanguage)) {
+        if (containsCjkCharacters(sections.dialogue) || containsCjkCharacters(sections.voiceover)) {
+          warnings.push(`${scriptLabel}/${shotLabel}: audience-facing dialogue or voiceover should be English for the current locale.`);
+        }
+      } else if (looksChineseLanguageLabel(locale.inImageTextLanguage)) {
+        const dialogueText = safeText(sections.dialogue).toLowerCase();
+        const voiceoverText = safeText(sections.voiceover).toLowerCase();
+        const dialogueNeedsChinese = dialogueText && !dialogueText.startsWith("none");
+        const voiceoverNeedsChinese = voiceoverText && !voiceoverText.startsWith("none");
+        if (dialogueNeedsChinese && !containsCjkCharacters(sections.dialogue)) {
+          warnings.push(`${scriptLabel}/${shotLabel}: On-screen dialogue does not appear to use Chinese as requested.`);
+        }
+        if (voiceoverNeedsChinese && !containsCjkCharacters(sections.voiceover)) {
+          warnings.push(`${scriptLabel}/${shotLabel}: Voiceover does not appear to use Chinese as requested.`);
+        }
+      }
+    });
+  });
+  return Array.from(new Set(warnings));
+}
+
 function convertShortVideoScriptsToLegacySets(scripts) {
   return toArray(scripts)
     .map((script, scriptIndex) => {
@@ -3369,7 +3543,7 @@ function buildShortVideoPromptUserPayload({ product, analysisResult, inputPayloa
   return {
     opening: buildShortVideoPromptOpening(locale),
     task:
-      `请严格根据规范文档生成短视频提示词，不要遗漏字段。请基于图词请求阶段产出的产品细节信息（外观/材质/形状/尺寸/颜色）进行生成，并将该信息作为最高优先级参考源。目标市场为 ${locale.targetMarket}，画面风格、人物设定和生活场景必须符合该市场偏好。所有提示词内容必须为英文；面向观众的对白/画面文字/旁白/字幕必须全部使用 ${locale.inImageTextLanguage}，不得混入其他语言。`,
+      `请严格根据规范文档生成短视频提示词，不要遗漏字段。请基于图词请求阶段产出的产品细节信息（外观/材质/形状/尺寸/颜色）进行生成，并将该信息作为最高优先级参考源。目标市场为 ${locale.targetMarket}，画面风格、人物设定和生活场景必须符合该市场偏好。digital_human_base_image_prompt 与 image_prompt 必须保持英文；video_prompt 中除面向观众的对白/画面文字/旁白/字幕外，其余镜头、动作、场景、风格、音频说明必须保持英文。面向观众的对白/画面文字/旁白/字幕必须全部使用 ${locale.inImageTextLanguage}，不得混入其他语言。如果需要画面中的招牌、字幕卡、包装文案等目标语言文字，请在 image_prompt 中只用英文描述其位置和用途，不要直接写出目标语言文本本身。`,
     product_reference: {
       title: safeText(product?.title),
       shop_name: safeText(product?.shopName),
@@ -3439,6 +3613,18 @@ async function requestShortVideoPromptScripts({ product, analysisResult, inputPa
     note = ""
   } = {}) => {
     const normalizedOutputPayload = normalizedOutput || normalizeShortVideoOutputPayload(parsedOutput || {});
+    const sanitizedOutputPayload = sanitizeShortVideoOutputPayloadLanguage(normalizedOutputPayload, normalizedLocale);
+    const validationWarnings = buildShortVideoContentWarnings(sanitizedOutputPayload, normalizedLocale);
+    const normalizedProductionNotes = safeObject(sanitizedOutputPayload.production_notes) || {};
+    const enrichedOutputPayload = {
+      ...sanitizedOutputPayload,
+      production_notes: {
+        ...normalizedProductionNotes,
+        validation_warnings: validationWarnings,
+        prompt_language: normalizedLocale.promptLanguage,
+        audience_language: normalizedLocale.inImageTextLanguage
+      }
+    };
     const rawResponseJson = safeObject(parsedResponse) || null;
     const modelOutputJson = safeObject(parsedOutput) || null;
     const mergedRaw = {
@@ -3449,7 +3635,8 @@ async function requestShortVideoPromptScripts({ product, analysisResult, inputPa
       response_json: rawResponseJson,
       raw_model_text: safeText(modelText),
       model_output_json: modelOutputJson,
-      source_output_raw: safeObject(normalizedOutputPayload.raw) || null
+      source_output_raw: safeObject(enrichedOutputPayload.raw) || null,
+      validation_warnings: validationWarnings
     };
     return {
       inputPayload: normalizedInputPayload,
@@ -3462,12 +3649,12 @@ async function requestShortVideoPromptScripts({ product, analysisResult, inputPa
         sentAt
       },
       outputPayload: {
-        ...normalizedOutputPayload,
+        ...enrichedOutputPayload,
         raw: mergedRaw,
         model,
         raw_model_text: safeText(modelText)
       },
-      scriptSets: convertShortVideoScriptsToLegacySets(normalizedOutputPayload.scripts),
+      scriptSets: convertShortVideoScriptsToLegacySets(enrichedOutputPayload.scripts),
       generatedAt: new Date().toISOString()
     };
   };
@@ -3523,12 +3710,18 @@ async function requestShortVideoPromptScripts({ product, analysisResult, inputPa
     );
   }
   const parsedResponse = parseJsonObject(text);
+  const modelText = extractOpenAiLikeTextContent(parsedResponse);
+  const parsedOutput = extractStructuredShortVideoOutputPayload(parsedResponse);
+  const normalizedOutput = normalizeShortVideoOutputPayload(parsedOutput || {});
   return buildDebugResult({
     responseStatus: response.status,
     responseText: text,
     parsedResponse,
-    stage: "success_raw_passthrough",
-    note: "raw response passthrough mode"
+    modelText,
+    parsedOutput,
+    normalizedOutput,
+    stage: "success_structured_output",
+    note: parsedOutput ? "structured output parsed from model response" : "response received but structured output not detected"
   });
 }
 
@@ -5534,7 +5727,9 @@ app.post("/api/products/:recordId/video-script/debug", async (req, res) => {
       localeConfig: locale
     });
     const mergedResult = mergeVideoScriptFailureResult(existingVideoState.result, debugResult);
-    const nextStatus = existingVideoState.status === "completed" ? "completed" : "failed";
+    const hasStructuredResult =
+      Array.isArray(mergedResult?.scriptSets) && mergedResult.scriptSets.length > 0;
+    const nextStatus = hasStructuredResult || existingVideoState.status === "completed" ? "completed" : "failed";
     const saved = await setVideoScriptGenerationState(recordId, {
       status: nextStatus,
       error: null,

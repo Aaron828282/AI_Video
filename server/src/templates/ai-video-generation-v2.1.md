@@ -1,4 +1,4 @@
-# AI短视频带货脚本生成系统 — 执行规范 v2.3
+# AI短视频带货脚本生成系统 — 执行规范 v2.4
 
 适用模型：Nano Banana Pro（生图）+ Veo 3.1 Fast（生视频）
 
@@ -53,7 +53,8 @@
 - 帧图契合：帧图静态画面必须与对应视频提示词的开场/结尾时刻严格一致。
 - 音频互斥：同一时间段内 `on_screen_dialogue` 与 `voiceover` 不可同时存在。
 - 实拍优先：复杂物理交互动作一律标记人工实拍，AI视频只负责人物出镜与场景氛围。
-- 语言一致：提示词正文为英文；面向观众语言必须是 `in_image_text_language`，不得混入其他语言。
+- 语言一致：`digital_human_base_image_prompt` 与 `image_prompt` 必须为英文；`video_prompt` 中除面向观众的对白/旁白/字幕/画面文字外，其余镜头、场景、风格、音频说明必须为英文；面向观众语言必须是 `in_image_text_language`，不得混入其他语言。
+- 若需要画面中的招牌、字幕卡、包装文案等目标语言文字，`image_prompt` 仅可用英文描述其位置与用途，不要直接写出目标语言文本本身。
 
 ---
 
@@ -192,8 +193,8 @@
   - `Need to send the product reference image together with this prompt to the model for identity consistency.`
 
 - 分镜一致性附加语（必须出现在 `image_prompt` 末尾）：
-  - `shot_01`：`注意保持产品与参考图中的产品主体一致性`
-  - `shot_02` / `shot_03`：`注意保持产品与参考图中的产品主体一致性，注意保持画面场景与参考图中的画面场景一致性`
+  - `shot_01`：`Keep the product identity fully consistent with the product in the reference image.`
+  - `shot_02` / `shot_03`：`Keep the product identity fully consistent with the product in the reference image, and keep the scene fully consistent with the reference scene.`
 
 ---
 
@@ -339,4 +340,4 @@ All audio above will be natively generated and synchronized with visuals by Veo 
 |------|------|---------|
 | v2.2 | 2026-03-06 | 与短视频提示词功能对齐；明确 runtime 参数映射；统一 24s 三段结构；固定 JSON 唯一输出。 |
 | v2.3 | 2026-03-06 | 增加接口模式默认值策略：缺失 target_market/in_image_text_language 自动回退为 United States/English；移除中途询问，要求一次性完整返回。 |
-
+| v2.4 | 2026-03-21 | 统一语言规则：image_prompt / digital_human_base_image_prompt 保持英文；video_prompt 中仅面向观众的对白、旁白、字幕、画面文字可使用目标语言；一致性附加语改为英文。 |
